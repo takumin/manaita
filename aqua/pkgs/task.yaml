@@ -1,0 +1,3 @@
+---
+packages:
+- name: go-task/task@v3.54.0

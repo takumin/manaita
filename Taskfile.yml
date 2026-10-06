@@ -1,0 +1,46 @@
+---
+# https://taskfile.dev
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+includes:
+  generate: ./tasks/generate.task.yml
+  style: ./tasks/style.task.yml
+  format: ./tasks/format.task.yml
+  reviewdog: ./tasks/reviewdog.task.yml
+  app: ./tasks/app.task.yml
+
+tasks:
+  default:
+    silent: true
+    deps: [aqua]
+    cmds:
+    - task: generate
+    - task: style
+    - task: format
+    - task: reviewdog
+    - task: app
+  aqua:
+    run: once
+    sources:
+    - aqua/*.yaml
+    - aqua/**/*.yaml
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - aqua install --all
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true
+  test:
+    silent: true
+    deps:
+    - task: app:{{.TASK}}
+  build:
+    silent: true
+    deps:
+    - task: app:{{.TASK}}
+  clean:
+    silent: true
+    deps:
+    - task: app:{{.TASK}}

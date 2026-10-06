@@ -1,0 +1,6 @@
+---
+rules:
+  # actionlint does not support the self-repository syntax ( `uses: $/...` ) yet.
+  # https://github.com/rhysd/actionlint/issues/711
+  self-repository:
+    disable: true

@@ -1,0 +1,39 @@
+---
+name: Setup Aqua
+description: Setup Aqua by using cache and environment variables
+runs:
+  using: composite
+  steps:
+  - name: Restore Aqua Cache
+    id: cache-primes-restore
+    uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+    with:
+      key: aqua-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('aqua/*.yaml', 'aqua/**/*.yaml') }}
+      path: |-
+        ~/.local/share/aquaproj-aqua
+  - name: Setup Aqua
+    uses: aquaproj/aqua-installer@9ebf656952a20c45a5d66606f083ff34f58b8ce0 # v4.0.0
+    with:
+      aqua_version: v2.64.0
+      aqua_opts: -a
+  - name: Get Default Branch
+    id: gh
+    env:
+      GH_TOKEN: ${{ github.token }}
+    shell: bash
+    run: echo default_branch_ref_name="$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)" >> "$GITHUB_OUTPUT"
+  - name: Show Branch
+    shell: bash
+    run: |-
+      echo "REF_NAME: '${REF_NAME}'"
+      echo "DEFAULT_BRANCH_REF_NAME: '${DEFAULT_BRANCH_REF_NAME}'"
+    env:
+      REF_NAME: ${{ github.ref_name }}
+      DEFAULT_BRANCH_REF_NAME: ${{ steps.gh.outputs.default_branch_ref_name }}
+  - name: Save Aqua Cache
+    if: github.ref_name == steps.gh.outputs.default_branch_ref_name && steps.cache-primes-restore.outputs.cache-hit != 'true'
+    uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+    with:
+      key: ${{ steps.cache-primes-restore.outputs.cache-primary-key }}
+      path: |-
+        ~/.local/share/aquaproj-aqua

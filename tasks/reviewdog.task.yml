@@ -1,0 +1,270 @@
+---
+# https://taskfile.dev
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+vars:
+  REVIEWDOG_ARGS:
+  - -filter-mode 'nofilter'
+  - -log-level 'warning'
+  - -fail-level 'any'
+
+tasks:
+  default:
+    silent: true
+    deps:
+    - editorconfig-checker
+    - biome
+    - yamllint
+    - shfmt
+    - shellcheck
+    - gofmt
+    - govet
+    - gosec
+    - golangci-lint
+    - actionlint
+    - ghalint-run
+    - ghalint-act
+    - zizmor
+
+  reviewdog:
+    internal: true
+    cmds:
+    - >-
+      reviewdog
+      -runners '{{.REVIEWDOG_RUNNER}}'
+      -reporter '{{env "REVIEWDOG_REPORTER" | default "local"}}'
+      {{.REVIEWDOG_ARGS | join " "}}
+
+  editorconfig-checker:
+    run: once
+    sources:
+    - '**/*'
+    - exclude: '.git/**/*'
+    - exclude: '.task/**/*'
+    - exclude: 'bin/**/*'
+    - exclude: 'dist/**/*'
+    - exclude: '**/coverage.out'
+    - exclude: '**/coverage.html'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - task: reviewdog
+      vars:
+        REVIEWDOG_RUNNER: '{{splitList ":" .TASK | last}}'
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true
+
+  biome:
+    run: once
+    sources:
+    - 'biome.json'
+    - '**/*.json'
+    - exclude: '.git/**/*'
+    - exclude: '.task/**/*'
+    - exclude: 'bin/**/*'
+    - exclude: 'dist/**/*'
+    - exclude: '**/*.invalid.json'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - task: reviewdog
+      vars:
+        REVIEWDOG_RUNNER: '{{splitList ":" .TASK | last}}'
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true
+
+  yamllint:
+    run: once
+    sources:
+    - '.yamllint.yml'
+    - '**/*.yml'
+    - '**/*.yaml'
+    - exclude: '.git/**/*'
+    - exclude: '.task/**/*'
+    - exclude: 'bin/**/*'
+    - exclude: 'dist/**/*'
+    - exclude: '**/*.invalid.yml'
+    - exclude: '**/*.invalid.yaml'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - task: reviewdog
+      vars:
+        REVIEWDOG_RUNNER: '{{splitList ":" .TASK | last}}'
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true
+
+  shfmt:
+    run: once
+    sources:
+    - '**/*.sh'
+    - '**/*.bash'
+    - exclude: '.git/**/*'
+    - exclude: '.task/**/*'
+    - exclude: 'bin/**/*'
+    - exclude: 'dist/**/*'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - task: reviewdog
+      vars:
+        REVIEWDOG_RUNNER: '{{splitList ":" .TASK | last}}'
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true
+
+  shellcheck:
+    run: once
+    sources:
+    - '**/*.sh'
+    - '**/*.bash'
+    - exclude: '.git/**/*'
+    - exclude: '.task/**/*'
+    - exclude: 'bin/**/*'
+    - exclude: 'dist/**/*'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - task: reviewdog
+      vars:
+        REVIEWDOG_RUNNER: '{{splitList ":" .TASK | last}}'
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true
+
+  gofmt:
+    run: once
+    sources:
+    - 'go.work'
+    - '**/go.mod'
+    - '**/go.sum'
+    - '**/*.go'
+    - exclude: '.git/**/*'
+    - exclude: '.task/**/*'
+    - exclude: 'bin/**/*'
+    - exclude: 'dist/**/*'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - task: reviewdog
+      vars:
+        REVIEWDOG_RUNNER: '{{splitList ":" .TASK | last}}'
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true
+
+  govet:
+    run: once
+    sources:
+    - 'go.work'
+    - '**/go.mod'
+    - '**/go.sum'
+    - '**/*.go'
+    - exclude: '.git/**/*'
+    - exclude: '.task/**/*'
+    - exclude: 'bin/**/*'
+    - exclude: 'dist/**/*'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - task: reviewdog
+      vars:
+        REVIEWDOG_RUNNER: '{{splitList ":" .TASK | last}}'
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true
+
+  gosec:
+    run: once
+    sources:
+    - 'go.work'
+    - '**/go.mod'
+    - '**/go.sum'
+    - '**/*.go'
+    - exclude: '.git/**/*'
+    - exclude: '.task/**/*'
+    - exclude: 'bin/**/*'
+    - exclude: 'dist/**/*'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - task: reviewdog
+      vars:
+        REVIEWDOG_RUNNER: '{{splitList ":" .TASK | last}}'
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true
+
+  golangci-lint:
+    run: once
+    sources:
+    - '.golangci.yml'
+    - 'go.work'
+    - '**/go.mod'
+    - '**/go.sum'
+    - '**/*.go'
+    - exclude: '.git/**/*'
+    - exclude: '.task/**/*'
+    - exclude: 'bin/**/*'
+    - exclude: 'dist/**/*'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - task: reviewdog
+      vars:
+        REVIEWDOG_RUNNER: '{{splitList ":" .TASK | last}}'
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true
+
+  actionlint:
+    run: once
+    sources:
+    - '.github/**/*.yml'
+    - '.github/**/*.yaml'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - task: reviewdog
+      vars:
+        REVIEWDOG_RUNNER: '{{splitList ":" .TASK | last}}'
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true
+
+  ghalint-run:
+    run: once
+    sources:
+    - '.github/**/*.yml'
+    - '.github/**/*.yaml'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - task: reviewdog
+      vars:
+        REVIEWDOG_RUNNER: '{{splitList ":" .TASK | last}}'
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true
+
+  ghalint-act:
+    run: once
+    sources:
+    - '.github/**/*.yml'
+    - '.github/**/*.yaml'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - task: reviewdog
+      vars:
+        REVIEWDOG_RUNNER: '{{splitList ":" .TASK | last}}'
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true
+
+  zizmor:
+    run: once
+    sources:
+    - '.github/**/*.yml'
+    - '.github/**/*.yaml'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - task: reviewdog
+      vars:
+        REVIEWDOG_RUNNER: '{{splitList ":" .TASK | last}}'
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true

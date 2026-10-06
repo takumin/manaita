@@ -1,0 +1,3 @@
+---
+packages:
+- name: koalaman/shellcheck@v0.11.0

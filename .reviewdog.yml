@@ -1,0 +1,50 @@
+---
+runner:
+  shfmt:
+    cmd: shfmt -d .
+    format: diff
+  shellcheck:
+    cmd: shellcheck -f checkstyle $(find '.' -type f -a \( -name '*.sh' -o -name '*.bash' \) -print)
+    format: checkstyle
+  biome:
+    cmd: biome lint --reporter=rdjson . 2>/dev/null
+    format: rdjson
+  yamllint:
+    cmd: yamllint -f parsable .
+    format: yamllint
+  actionlint:
+    cmd: actionlint -oneline
+    errorformat:
+    - '%f:%l:%c: %m'
+  ghalint-run:
+    cmd: ghalint --log-color never run
+    errorformat:
+    - '%.%#error="%m" job_name=%.%#workflow_file_path=%f'
+    - '%-G%.%#'
+  ghalint-act:
+    cmd: ghalint --log-color never act $(find .github/actions -type f -name action.yaml)
+    errorformat:
+    - '%.%#action_file_path=%f error="%m" policy_name=%.%#'
+    - '%-G%.%#'
+  gofmt:
+    cmd: gofmt -d .
+    format: diff
+  govet:
+    cmd: go vet ./...
+    format: govet
+  gosec:
+    cmd: gosec -quiet -fmt golint ./...
+    format: gosec
+  golangci-lint:
+    cmd: golangci-lint run --output.text.path stdout ./...
+    format: golangci-lint
+  editorconfig-checker:
+    cmd: editorconfig-checker -no-color
+    errorformat:
+    - '%-G%+P%f:'
+    - '%\s%+%l: %m'
+    - '%-Q'
+    - '%-G%.%#'
+  zizmor:
+    cmd: zizmor --quiet --no-progress --format=sarif .
+    format: sarif

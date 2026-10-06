@@ -1,0 +1,25 @@
+---
+# https://taskfile.dev
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+tasks:
+  default:
+    silent: true
+    deps:
+    - gogen
+
+  gogen:
+    run: once
+    sources:
+    - '**/go.mod'
+    - '**/go.sum'
+    - '**/*.go'
+    - exclude: '**/*_test.go'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - go generate ./...
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true

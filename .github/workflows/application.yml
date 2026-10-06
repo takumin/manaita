@@ -1,0 +1,189 @@
+---
+name: Application
+on:
+  workflow_call:
+permissions: {}
+concurrency:
+  group: application-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  ##############################################################################
+  # Changes
+  ##############################################################################
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      application: ${{ steps.changes.outputs.application }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Path Filter
+      id: changes
+      uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+      with:
+        filters: |
+          application:
+          - '.github/actions/setup-aqua/action.yaml'
+          - '.github/workflows/application.yml'
+          - 'aqua/*.yaml'
+          - 'aqua/**/*.yaml'
+          - '.octocov.yml'
+          - 'Taskfile.yml'
+          - 'tasks/**.task.yml'
+          - 'go.mod'
+          - 'go.sum'
+          - '**.go'
+  ################################################################################
+  # Testing
+  ################################################################################
+  test:
+    name: Testing
+    needs: changes
+    if: >-
+      ${{
+        github.ref_name == 'main' ||
+        github.ref_name == 'develop' ||
+        github.ref_name == 'release' ||
+        startsWith(github.ref_name, 'releases/') == 'true' ||
+        needs.changes.outputs.application == 'true'
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Setup Aqua
+      uses: ./.github/actions/setup-aqua
+    - name: Go Mod
+      run: task app:mod
+    - name: Go Test
+      run: task app:test
+    - name: Coverage (octocov)
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      with:
+        script: |
+          toolpath = await io.which('octocov', true)
+          await exec.exec(`${toolpath}`)
+      env:
+        OCTOCOV_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  ################################################################################
+  # Matrix
+  ################################################################################
+  matrix:
+    name: Matrix
+    needs: changes
+    if: >-
+      ${{
+        github.ref_name == 'main' ||
+        github.ref_name == 'develop' ||
+        github.ref_name == 'release' ||
+        startsWith(github.ref_name, 'releases/') == 'true' ||
+        needs.changes.outputs.application == 'true'
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      targets: ${{ steps.matrix.outputs.targets }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Setup Aqua
+      uses: ./.github/actions/setup-aqua
+    - name: Setup matrix
+      id: matrix
+      run: echo targets="$(task app:build:matrix | jq -R '.' | jq -cM --slurp)" >> "$GITHUB_OUTPUT"
+  ################################################################################
+  # Build
+  ################################################################################
+  build:
+    needs: matrix
+    name: Build (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        target: ${{ fromJson(needs.matrix.outputs.targets) }}
+    permissions:
+      id-token: write
+      attestations: write
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Setup Aqua
+      uses: ./.github/actions/setup-aqua
+    - name: Go Vars
+      id: go
+      run: echo version="$(go env GOVERSION | sed -E 's/^go//')" >> "$GITHUB_OUTPUT"
+    - name: Go Env (GOOS)
+      run: echo GOOS="$(echo "${MATRIX_TARGET}" | cut -d '/' -f 1)" >> "$GITHUB_ENV"
+      env:
+        MATRIX_TARGET: ${{ matrix.target }}
+    - name: Go Env (GOARCH)
+      run: echo GOARCH="$(echo "${MATRIX_TARGET}" | cut -d '/' -f 2)" >> "$GITHUB_ENV"
+      env:
+        MATRIX_TARGET: ${{ matrix.target }}
+    - name: Go Env (GOPATH)
+      run: echo GOPATH="${HOME}/.usr" >> "$GITHUB_ENV"
+    - name: Go Env (GOCACHE)
+      run: echo GOCACHE="${HOME}/.cache/go-build" >> "$GITHUB_ENV"
+    - name: Go Env (GOMODCACHE)
+      run: echo GOMODCACHE="${GOPATH}/pkg/mod" >> "$GITHUB_ENV"
+    - name: Restore Go Mod Cache
+      id: mod-cache-primes-restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: go-mod-${{ steps.go.outputs.version }}-${{ hashFiles('**/go.sum') }}
+        path: ${{ env.GOMODCACHE }}
+    - name: Restore Go Build Cache
+      id: build-cache-primes-restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: go-build-${{ steps.go.outputs.version }}-${{ env.GOOS }}-${{ env.GOARCH }}-${{ hashFiles('**/go.sum') }}
+        path: ${{ env.GOCACHE }}
+    - name: Go Mod
+      run: task app:mod
+    - name: Go Build
+      run: task app:build
+    - name: Artifact Attestation
+      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      with:
+        subject-path: 'bin/*'
+    - name: Upload Artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: '${{ env.GOOS }}-${{ env.GOARCH }}'
+        path: 'bin/*'
+    - name: Get Default Branch
+      id: gh
+      env:
+        GH_TOKEN: ${{ github.token }}
+      shell: bash
+      run: echo default_branch_ref_name="$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)" >> "$GITHUB_OUTPUT"
+    - name: Save Go Mod Cache
+      if: github.ref_name == steps.gh.outputs.default_branch_ref_name && steps.mod-cache-primes-restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: ${{ steps.mod-cache-primes-restore.outputs.cache-primary-key }}
+        path: ${{ env.GOMODCACHE }}
+    - name: Save Go Build Cache
+      if: github.ref_name == steps.gh.outputs.default_branch_ref_name && steps.build-cache-primes-restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: ${{ steps.build-cache-primes-restore.outputs.cache-primary-key }}
+        path: ${{ env.GOCACHE }}
