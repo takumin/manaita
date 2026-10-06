@@ -89,3 +89,50 @@ func TestSubcommands(t *testing.T) {
 		})
 	}
 }
+
+func TestCompletion(t *testing.T) {
+	t.Parallel()
+
+	root := testutil.Project(t)
+	cases := map[string]struct {
+		args   []string
+		stdout string
+	}{
+		"show":            {[]string{"show"}, "dsk\nempty\nrpi\n"},
+		"show given":      {[]string{"show", "dsk"}, ""},
+		"apply":           {[]string{"apply"}, "dsk\nempty\nrpi\n"},
+		"apply given":     {[]string{"apply", "-n", "dsk"}, "empty\nrpi\n"},
+		"apply flag":      {[]string{"apply", "--lo"}, "--log-level:log level\n--log-format:log format\n--local:apply to this machine instead of over ssh (HOST defaults to the short hostname)\n"},
+		"apply flag only": {[]string{"apply", "-j"}, ""},
+	}
+
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			var stdout, stderr bytes.Buffer
+			args := append([]string{"a", "-C", root}, tt.args...)
+			args = append(args, "--generate-shell-completion")
+			exit := command.Main(&stdout, &stderr, strings.NewReader(""), args)
+			if exit != command.ExitOK {
+				t.Fatalf("want exit %d, got %d: %s", command.ExitOK, exit, stderr.String())
+			}
+			if stdout.String() != tt.stdout {
+				t.Errorf("want %q, got %q", tt.stdout, stdout.String())
+			}
+		})
+	}
+
+	t.Run("outside project", func(t *testing.T) {
+		t.Parallel()
+
+		var stdout, stderr bytes.Buffer
+		args := []string{"a", "-C", t.TempDir(), "apply", "--generate-shell-completion"}
+		if exit := command.Main(&stdout, &stderr, strings.NewReader(""), args); exit != command.ExitOK {
+			t.Fatalf("want exit %d, got %d: %s", command.ExitOK, exit, stderr.String())
+		}
+		if stdout.String() != "" {
+			t.Errorf("want no suggestion, got %q", stdout.String())
+		}
+	})
+}
