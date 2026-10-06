@@ -68,6 +68,11 @@ func TestSubcommands(t *testing.T) {
 		"apply outside project": {[]string{"apply", "-C", "/", "dsk"}, command.ExitNG, nil},
 		"apply missing recipe":  {[]string{"apply", "-r", "missing", "dsk"}, command.ExitNG, nil},
 		"apply bad parallel":    {[]string{"apply", "-j", "0", "dsk", "rpi4"}, command.ExitNG, nil},
+		"apply dry-run removed": {[]string{"apply", "-n", "dsk"}, command.ExitNG, nil},
+		"plan no host":          {[]string{"plan"}, command.ExitNG, nil},
+		"plan outside project":  {[]string{"plan", "-C", "/", "dsk"}, command.ExitNG, nil},
+		"plan missing recipe":   {[]string{"plan", "-r", "missing", "dsk"}, command.ExitNG, nil},
+		"plan bad parallel":     {[]string{"plan", "-j", "0", "dsk", "rpi4"}, command.ExitNG, nil},
 	}
 
 	for name, tt := range cases {
@@ -100,7 +105,9 @@ func TestCompletion(t *testing.T) {
 		"show":            {[]string{"show"}, "dsk\nempty\nrpi4\nrpi4.example.internal\nrpi4.other.internal\n"},
 		"show given":      {[]string{"show", "dsk"}, ""},
 		"apply":           {[]string{"apply"}, "dsk\nempty\nrpi4\nrpi4.example.internal\nrpi4.other.internal\n"},
-		"apply given":     {[]string{"apply", "-n", "dsk"}, "empty\nrpi4\nrpi4.example.internal\nrpi4.other.internal\n"},
+		"apply given":     {[]string{"apply", "-L", "debug", "dsk"}, "empty\nrpi4\nrpi4.example.internal\nrpi4.other.internal\n"},
+		"plan":            {[]string{"plan"}, "dsk\nempty\nrpi4\nrpi4.example.internal\nrpi4.other.internal\n"},
+		"plan given":      {[]string{"plan", "dsk"}, "empty\nrpi4\nrpi4.example.internal\nrpi4.other.internal\n"},
 		"apply flag":      {[]string{"apply", "--lo"}, "--log-level:log level\n--log-format:log format\n"},
 		"apply flag only": {[]string{"apply", "-j"}, ""},
 	}

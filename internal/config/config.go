@@ -5,7 +5,6 @@ type Config struct {
 	LogFormat string
 	Chdir     string
 
-	DryRun          bool
 	MitamaeLogLevel string
 	Recipes         []string
 	Parallel        int

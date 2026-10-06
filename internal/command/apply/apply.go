@@ -22,13 +22,19 @@ import (
 )
 
 func NewCommands(cfg *config.Config, flags []cli.Flag) *cli.Command {
-	flags = append(flags, []cli.Flag{
-		&cli.BoolFlag{
-			Name:        "dry-run",
-			Aliases:     []string{"n"},
-			Usage:       "show the changes without applying them",
-			Destination: &cfg.DryRun,
-		},
+	return &cli.Command{
+		Name:          "apply",
+		Usage:         "apply the run list of hosts, or of this machine without a host",
+		ArgsUsage:     "[HOST...]",
+		Flags:         append(flags, Flags(cfg)...),
+		Action:        Action(cfg, false),
+		ShellComplete: complete.Hosts(cfg, true),
+	}
+}
+
+// Flags returns the flags of apply, shared with plan.
+func Flags(cfg *config.Config) []cli.Flag {
+	return []cli.Flag{
 		&cli.StringFlag{
 			Name:        "mitamae-log-level",
 			Aliases:     []string{"L"},
@@ -48,25 +54,18 @@ func NewCommands(cfg *config.Config, flags []cli.Flag) *cli.Command {
 			Value:       cfg.Parallel,
 			Destination: &cfg.Parallel,
 		},
-	}...)
-
-	return &cli.Command{
-		Name:          "apply",
-		Usage:         "apply the run list of hosts, or of this machine without a host",
-		ArgsUsage:     "[HOST...]",
-		Flags:         flags,
-		Action:        action(cfg),
-		ShellComplete: complete.Hosts(cfg, true),
 	}
 }
 
-func action(cfg *config.Config) func(ctx context.Context, cmd *cli.Command) error {
+// Action returns the action applying the run list to the hosts given, or to
+// this machine without a host. With dryRun, mitamae only shows the changes.
+func Action(cfg *config.Config, dryRun bool) cli.ActionFunc {
 	return func(ctx context.Context, cmd *cli.Command) error {
 		dests := cmd.Args().Slice()
 		// Without a host, this machine is applied. A terminal is required so
 		// that a host list expanded to nothing in a script fails instead.
 		if len(dests) == 0 && !isTerminal(cmd.Reader) {
-			return errors.New("no host given: applying to this machine requires a terminal")
+			return fmt.Errorf("no host given: %s on this machine requires a terminal", cmd.Name)
 		}
 		if cfg.Parallel < 1 {
 			return fmt.Errorf("invalid --parallel: %d", cfg.Parallel)
@@ -90,7 +89,7 @@ func action(cfg *config.Config) func(ctx context.Context, cmd *cli.Command) erro
 			Project: p,
 			Fetcher: fetcher,
 			Options: mitamae.Options{
-				DryRun:   cfg.DryRun,
+				DryRun:   dryRun,
 				LogLevel: cfg.MitamaeLogLevel,
 			},
 			Recipes: cfg.Recipes,
@@ -106,14 +105,15 @@ func action(cfg *config.Config) func(ctx context.Context, cmd *cli.Command) erro
 			d.TTY = isTerminal(cmd.Reader)
 			return d.Remote(ctx, dests[0])
 		default:
-			return parallel(ctx, d, dests, cfg.Parallel)
+			return parallel(ctx, d, dests, cfg.Parallel, cmd.Name)
 		}
 	}
 }
 
 // parallel applies to the ssh destinations dests concurrently, prefixing the
-// output with the destination. A failing host does not stop the others.
-func parallel(ctx context.Context, d *deploy.Deployer, dests []string, limit int) error {
+// output with the destination. A failing host does not stop the others. name
+// is the command, reported with the failures.
+func parallel(ctx context.Context, d *deploy.Deployer, dests []string, limit int, name string) error {
 	var mu sync.Mutex
 	g := errgroup.Group{}
 	g.SetLimit(limit)
@@ -131,7 +131,7 @@ func parallel(ctx context.Context, d *deploy.Deployer, dests []string, limit int
 			_ = stdout.Flush()
 			_ = stderr.Flush()
 			if err != nil {
-				logging.FromContext(ctx).ErrorContext(ctx, "failed to apply", slog.String("host", dest), slog.Any("error", err))
+				logging.FromContext(ctx).ErrorContext(ctx, "failed to "+name, slog.String("host", dest), slog.Any("error", err))
 				errs[i] = fmt.Errorf("%s: %w", dest, err)
 			}
 			return nil
