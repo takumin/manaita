@@ -77,11 +77,16 @@ func Main(stdout io.Writer, stderr io.Writer, stdin io.Reader, args []string) in
 		return logging.NewContext(ctx, logger), nil
 	}
 
+	ver := version.Version()
+	if pre := version.Prerelease(); pre != "" {
+		ver += "-" + pre
+	}
+
 	// MEMO: Authors field is invalid in urfave/cli/v3 v3.1.0
 	app := &cli.Command{
 		Name:                  metadata.AppName(),
 		Usage:                 metadata.AppDesc(),
-		Version:               fmt.Sprintf("%s (%s)", version.Version(), version.Revision()),
+		Version:               fmt.Sprintf("%s (%s)", ver, version.Revision()),
 		Flags:                 flags,
 		Commands:              cmds,
 		EnableShellCompletion: true,

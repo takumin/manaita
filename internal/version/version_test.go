@@ -24,3 +24,10 @@ func TestRevision(t *testing.T) {
 		}
 	}
 }
+
+func TestPrerelease(t *testing.T) {
+	reg := regexp.MustCompile(`^[0-9A-Za-z.-]*$`)
+	if got := version.Prerelease(); !reg.MatchString(got) {
+		t.Errorf("expected prerelease to match '^[0-9A-Za-z.-]*$', but got '%s'", got)
+	}
+}
