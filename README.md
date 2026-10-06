@@ -16,6 +16,31 @@ For a remote host, manaita copies the repository and the pinned mitamae binary w
 `ssh` and `rsync` are the external commands, so `~/.ssh/config`, the agent and `ProxyJump` apply as usual.
 The node attribute files are passed to mitamae as they are, so they merge exactly like with `mitamae local -y`.
 
+## Installation
+
+Download the binary for your platform from the [releases](https://github.com/takumin/manaita/releases) and verify it:
+
+```sh
+VERSION=v0.1.0
+BIN="manaita_${VERSION}_linux_amd64"
+BASE="https://github.com/takumin/manaita/releases/download/${VERSION}"
+curl -fsSLO "${BASE}/${BIN}" -O "${BASE}/${BIN}.sig" -O "${BASE}/${BIN}.cert" -O "${BASE}/SHA256SUMS"
+sha256sum -c --ignore-missing SHA256SUMS
+cosign verify-blob "${BIN}" \
+  --signature "${BIN}.sig" \
+  --certificate "${BIN}.cert" \
+  --certificate-identity-regexp '^https://github\.com/takumin/manaita/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+gh attestation verify "${BIN}" --repo takumin/manaita # alternatively
+install -m 0755 "${BIN}" ~/.local/bin/manaita
+```
+
+Or build it with Go:
+
+```sh
+go install github.com/takumin/manaita@latest
+```
+
 ## Usage
 
 ```sh
