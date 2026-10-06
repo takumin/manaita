@@ -1,11 +1,11 @@
 # manaita
+
 Deploy mitamae recipes to hosts over ssh
 
 [![CI](https://github.com/takumin/manaita/actions/workflows/integration.yml/badge.svg)](https://github.com/takumin/manaita/actions/workflows/integration.yml)
 [![Coverage](https://raw.githubusercontent.com/takumin/octocov-central/main/badges/takumin/manaita/coverage.svg)](https://github.com/takumin/manaita/actions/workflows/integration.yml)
 [![Code to Test Ratio](https://raw.githubusercontent.com/takumin/octocov-central/main/badges/takumin/manaita/ratio.svg)](https://github.com/takumin/manaita/actions/workflows/integration.yml)
 [![Test Execution Time](https://raw.githubusercontent.com/takumin/octocov-central/main/badges/takumin/manaita/time.svg)](https://github.com/takumin/manaita/actions/workflows/integration.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/takumin/manaita)](https://goreportcard.com/report/github.com/takumin/manaita)
 
 ## Overview
 
@@ -38,40 +38,40 @@ The root of a project holds `manaita.yml`:
 ```yaml
 mitamae:
   version: 2.0.3
-  checksums:                 # SHA-256 of the release binaries, by arch
+  checksums: # SHA-256 of the release binaries, by arch
     x86_64: 61c6b2a678f45c1374506874846cf362bc418e4914dd0cf5eb56351210dcb930
     aarch64: 60896c5598eab03283e6f1df95fea861217c69f7a259eb6cca097c1dca34c46b
 
-hosts: hosts                 # inventory directory (default)
+hosts: hosts # inventory directory (default)
 
 # Node attribute files, from the least to the most specific.
 # {hostname} and {domain} come from the host; a pattern is skipped when one is empty.
 nodes:
-- nodes/all/*.yml
-- nodes/domains/{domain}/*.yml
-- nodes/hosts/{hostname}/*.yml
-- nodes/fqdns/{domain}/{hostname}/*.yml
+  - nodes/all/*.yml
+  - nodes/domains/{domain}/*.yml
+  - nodes/hosts/{hostname}/*.yml
+  - nodes/fqdns/{domain}/{hostname}/*.yml
 
-prelude:                     # recipes run before every run list
-- helpers/keeper.rb
+prelude: # recipes run before every run list
+  - helpers/keeper.rb
 
 remote:
-  path: mitamae              # destination, relative to the home directory (default)
-  exclude:                   # rsync patterns not copied
-  - /.git/
+  path: mitamae # destination, relative to the home directory (default)
+  exclude: # rsync patterns not copied
+    - /.git/
 ```
 
 Each host is a file of the inventory, named after the host:
 
 ```yaml
 # hosts/rpi4-8g-1.yml
-ssh: rpi4-8g-1.metal.internal   # ssh destination (default: the file name)
-hostname: rpi4-8g-1             # used in the node patterns (default: the file name)
-domain: metal.internal          # used in the node patterns
+ssh: rpi4-8g-1.metal.internal # ssh destination (default: the file name)
+hostname: rpi4-8g-1 # used in the node patterns (default: the file name)
+domain: metal.internal # used in the node patterns
 run_list:
-- cookbooks/common/sudo         # a directory runs its default.rb
-- cookbooks/server/knot-resolver
-- roles/rpi4-8g.rb
+  - cookbooks/common/sudo # a directory runs its default.rb
+  - cookbooks/server/knot-resolver
+  - roles/rpi4-8g.rb
 ```
 
 A node file matched by several patterns, directly or through a symlink, is passed only once.
