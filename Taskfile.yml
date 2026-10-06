@@ -6,7 +6,6 @@ version: '3'
 
 includes:
   generate: ./tasks/generate.task.yml
-  style: ./tasks/style.task.yml
   format: ./tasks/format.task.yml
   reviewdog: ./tasks/reviewdog.task.yml
   app: ./tasks/app.task.yml
@@ -17,7 +16,6 @@ tasks:
     deps: [aqua]
     cmds:
     - task: generate
-    - task: style
     - task: format
     - task: reviewdog
     - task: app

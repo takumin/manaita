@@ -2,10 +2,10 @@
 
 Deploy mitamae recipes to hosts over ssh
 
-[![CI](https://github.com/takumin/manaita/actions/workflows/integration.yml/badge.svg)](https://github.com/takumin/manaita/actions/workflows/integration.yml)
-[![Coverage](https://raw.githubusercontent.com/takumin/octocov-central/main/badges/takumin/manaita/coverage.svg)](https://github.com/takumin/manaita/actions/workflows/integration.yml)
-[![Code to Test Ratio](https://raw.githubusercontent.com/takumin/octocov-central/main/badges/takumin/manaita/ratio.svg)](https://github.com/takumin/manaita/actions/workflows/integration.yml)
-[![Test Execution Time](https://raw.githubusercontent.com/takumin/octocov-central/main/badges/takumin/manaita/time.svg)](https://github.com/takumin/manaita/actions/workflows/integration.yml)
+[![CI](https://github.com/takumin/manaita/actions/workflows/ci.yml/badge.svg)](https://github.com/takumin/manaita/actions/workflows/ci.yml)
+[![Coverage](https://raw.githubusercontent.com/takumin/octocov-central/main/badges/takumin/manaita/coverage.svg)](https://github.com/takumin/manaita/actions/workflows/ci.yml)
+[![Code to Test Ratio](https://raw.githubusercontent.com/takumin/octocov-central/main/badges/takumin/manaita/ratio.svg)](https://github.com/takumin/manaita/actions/workflows/ci.yml)
+[![Test Execution Time](https://raw.githubusercontent.com/takumin/octocov-central/main/badges/takumin/manaita/time.svg)](https://github.com/takumin/manaita/actions/workflows/ci.yml)
 
 ## Overview
 

@@ -15,7 +15,9 @@ vars:
 
   VERSION: '{{trimPrefix "v" .RAW_VERSION}}'
   REVISION: '{{.COMMIT_ID}}'
-  PRERELEASE: '{{.PRERELEASE | default "dev" .PRERELEASE}}'
+  # Builds from an exact release tag carry no prerelease suffix.
+  PRERELEASE:
+    sh: git describe --tags --exact-match >/dev/null 2>&1 || echo 'dev'
   FULLVERSION: '{{.VERSION}}{{if ne "" .PRERELEASE}}-{{.PRERELEASE}}{{end}}'
 
   LDFLAGS_VERSION: -X "{{.PKGNAME}}/internal/version.version={{.VERSION}}"
@@ -41,6 +43,7 @@ tasks:
     - rm -f coverage.out
     - rm -f coverage.html
     - rm -fr bin
+    - rm -fr dist
 
   mod:
     run: once
@@ -78,7 +81,7 @@ tasks:
     - '**/*.go'
     - exclude: '**/*_test.go'
     generates:
-    - bin/{{.BINNAME}}
+    - dist/{{.BINNAME}}
     vars:
       GOOS: '{{default OS .GOOS}}'
       GOARCH: '{{default ARCH .GOARCH}}'
@@ -89,7 +92,55 @@ tasks:
       GOOS: '{{.GOOS}}'
       GOARCH: '{{.GOARCH}}'
     cmds:
-    - go build {{.BUILDFLAGS}} -o bin/{{.BINNAME}}
+    - go build {{.BUILDFLAGS}} -o dist/{{.BINNAME}}
+
+  build:sha256sum:
+    dir: '{{.ROOT_DIR}}/dist'
+    deps: [build]
+    sources:
+    - '{{.BINNAME}}'
+    generates:
+    - '{{.BINNAME}}.sha256sum'
+    vars:
+      GOOS: '{{default OS .GOOS}}'
+      GOARCH: '{{default ARCH .GOARCH}}'
+      BINEXE: '{{if eq .GOOS "windows"}}.exe{{end}}'
+      BINNAME: '{{base .ROOT_DIR}}_v{{.FULLVERSION}}_{{.GOOS}}_{{.GOARCH}}{{.BINEXE}}'
+    cmds:
+    - sha256sum "{{.BINNAME}}" > "{{.BINNAME}}.sha256sum"
+
+  build:sha256sum:verify:
+    dir: '{{.ROOT_DIR}}/dist'
+    deps: ['build:sha256sum']
+    vars:
+      GOOS: '{{default OS .GOOS}}'
+      GOARCH: '{{default ARCH .GOARCH}}'
+      BINEXE: '{{if eq .GOOS "windows"}}.exe{{end}}'
+      BINNAME: '{{base .ROOT_DIR}}_v{{.FULLVERSION}}_{{.GOOS}}_{{.GOARCH}}{{.BINEXE}}'
+    cmds:
+    - sha256sum -c "{{.BINNAME}}.sha256sum"
+
+  build:cosign:
+    dir: '{{.ROOT_DIR}}/dist'
+    deps: [build]
+    sources:
+    - '{{.BINNAME}}'
+    generates:
+    - '{{.BINNAME}}.cert'
+    - '{{.BINNAME}}.sig'
+    vars:
+      GOOS: '{{default OS .GOOS}}'
+      GOARCH: '{{default ARCH .GOARCH}}'
+      BINEXE: '{{if eq .GOOS "windows"}}.exe{{end}}'
+      BINNAME: '{{base .ROOT_DIR}}_v{{.FULLVERSION}}_{{.GOOS}}_{{.GOARCH}}{{.BINEXE}}'
+    cmds:
+    - >-
+      cosign sign-blob {{.BINNAME}}
+      -y
+      --use-signing-config=false
+      --new-bundle-format=false
+      --output-certificate {{.BINNAME}}.cert
+      --output-signature {{.BINNAME}}.sig
 
   build:release:
     run: once
@@ -110,10 +161,8 @@ tasks:
     run: once
     silent: true
     cmds:
-    - for:
-        matrix:
-          GOOS:
-            ref: .MATRIX_GOOS
-          GOARCH:
-            ref: .MATRIX_GOARCH
-      cmd: echo '{{.ITEM.GOOS}}/{{.ITEM.GOARCH}}'
+    - >-
+      jq -cMn
+      --argjson goos '{{.MATRIX_GOOS | toJson}}'
+      --argjson goarch '{{.MATRIX_GOARCH | toJson}}'
+      '{include: [$goos[] as $os | $goarch[] | {goos: $os, goarch: .}]}'

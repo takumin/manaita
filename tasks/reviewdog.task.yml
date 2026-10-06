@@ -5,6 +5,12 @@
 version: '3'
 
 vars:
+  # Base reviewdog flags applied in every environment (local and CI). These are
+  # the lint gate: -filter-mode nofilter lints the whole tree (not just changed
+  # lines) and -fail-level any makes reviewdog exit non-zero on any finding, so
+  # lint issues fail the job. CI appends its own flags via the REVIEWDOG_ARGS
+  # env var (see the reviewdog task); they are added to these, not substituted,
+  # so the gate can never be silently dropped.
   REVIEWDOG_ARGS:
   - -filter-mode 'nofilter'
   - -log-level 'warning'
@@ -28,6 +34,11 @@ tasks:
     - ghalint-act
     - zizmor
 
+  matrix:
+    silent: true
+    cmds:
+    - task -aj | jq -cM -f scripts/actions-matrix.jq
+
   reviewdog:
     internal: true
     cmds:
@@ -36,6 +47,7 @@ tasks:
       -runners '{{.REVIEWDOG_RUNNER}}'
       -reporter '{{env "REVIEWDOG_REPORTER" | default "local"}}'
       {{.REVIEWDOG_ARGS | join " "}}
+      {{env "REVIEWDOG_ARGS"}}
 
   editorconfig-checker:
     run: once

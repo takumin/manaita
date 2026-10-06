@@ -1,0 +1,57 @@
+---
+name: Coverage
+on:
+  workflow_call:
+permissions: {}
+concurrency:
+  group: coverage-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+jobs:
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # octocov posts a coverage comment on pull requests and reads/writes the
+      # report from the GitHub Actions Artifacts datastore.
+      actions: read
+      pull-requests: write
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Setup aqua
+      uses: aquaproj/aqua-installer@96a9bc20066c5bf5e275b41019cfc165b25f4e2e # v4.0.5
+      with:
+        aqua_version: v2.64.0
+    - name: Restore go mod cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: go-mod-${{ hashFiles('**/go.sum') }}
+        restore-keys: |-
+          go-mod-
+        path: ~/go/pkg/mod/
+    - name: Restore go build cache (read-only)
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: go-build-test-${{ hashFiles('**/go.sum') }}
+        restore-keys: |-
+          go-build-test-
+        path: ~/.cache/go-build/
+    - name: Coverage
+      run: |-
+        task app:test
+    # The Artifacts datastore needs ACTIONS_RUNTIME_TOKEN, which the runner
+    # injects into action steps only — from a plain `run:` step octocov aborts
+    # with "env ACTIONS_RUNTIME_TOKEN is only available from the context of an
+    # action". So invoke it through a JavaScript action; github-script execs the
+    # aqua-pinned binary, keeping aqua the single source of truth for the octocov
+    # version.
+    - name: Octocov
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        script: await exec.exec('octocov')

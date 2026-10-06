@@ -1,7 +1,7 @@
 # Development Guide
 
 ## Build Commands
-- `task` - Run all tasks (generate, style, format, reviewdog, app)
+- `task` - Run all tasks (generate, format, reviewdog, app)
 - `task app:build` - Build the application
 - `task app:test` - Run all tests with race detection and coverage
 - `task format` - Format code (gofmt, shfmt, yamlfmt)

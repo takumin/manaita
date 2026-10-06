@@ -22,7 +22,7 @@ runner:
     - '%.%#error="%m" job_name=%.%#workflow_file_path=%f'
     - '%-G%.%#'
   ghalint-act:
-    cmd: ghalint --log-color never act $(find .github/actions -type f -name action.yaml)
+    cmd: ghalint --log-color never act
     errorformat:
     - '%.%#action_file_path=%f error="%m" policy_name=%.%#'
     - '%-G%.%#'

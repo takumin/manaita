@@ -11,6 +11,7 @@ tasks:
     - shfmt
     - yamlfmt
     - gofmt
+    - pinact
 
   shfmt:
     run: once
@@ -50,5 +51,17 @@ tasks:
     - .task/.done_{{.TASK}}
     cmds:
     - gofmt -w .
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true
+
+  pinact:
+    run: once
+    sources:
+    - '.github/**/*.yml'
+    - '.github/**/*.yaml'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - pinact run
     - cmd: touch .task/.done_{{.TASK}}
       silent: true
