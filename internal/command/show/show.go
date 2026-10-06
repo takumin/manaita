@@ -10,6 +10,7 @@ import (
 	"github.com/takumin/manaita/internal/command/complete"
 	"github.com/takumin/manaita/internal/config"
 	"github.com/takumin/manaita/internal/deploy"
+	"github.com/takumin/manaita/internal/mitamae"
 	"github.com/takumin/manaita/internal/project"
 )
 
@@ -25,8 +26,8 @@ func NewCommands(cfg *config.Config, flags []cli.Flag) *cli.Command {
 
 	return &cli.Command{
 		Name:          "show",
-		Usage:         "show the node files and recipes applied to a host of the inventory",
-		ArgsUsage:     "HOST",
+		Usage:         "show the node files and recipes applied to a host of the inventory, or to this machine without a host",
+		ArgsUsage:     "[HOST]",
 		Flags:         flags,
 		Action:        action(cfg),
 		ShellComplete: complete.Hosts(cfg, false),
@@ -35,12 +36,15 @@ func NewCommands(cfg *config.Config, flags []cli.Flag) *cli.Command {
 
 func action(cfg *config.Config) func(ctx context.Context, cmd *cli.Command) error {
 	return func(ctx context.Context, cmd *cli.Command) error {
-		if cmd.Args().Len() != 1 {
-			return fmt.Errorf("expected exactly one host, got %d", cmd.Args().Len())
+		if cmd.Args().Len() > 1 {
+			return fmt.Errorf("expected at most one host, got %d", cmd.Args().Len())
 		}
 		p, err := project.Open(cfg.Chdir)
 		if err != nil {
 			return err
+		}
+		if cmd.Args().Len() == 0 {
+			return showLocal(ctx, cmd, cfg, p)
 		}
 		h, err := p.HostByFQDN(cmd.Args().First())
 		if err != nil {
@@ -50,16 +54,36 @@ func action(cfg *config.Config) func(ctx context.Context, cmd *cli.Command) erro
 		if err != nil {
 			return err
 		}
-		return print(cmd.Writer, p, plan)
+		d := &deploy.Deployer{Project: p}
+		return print(cmd.Writer, p, plan, d.RemoteCommand(plan))
 	}
 }
 
-func print(w io.Writer, p *project.Project, plan *deploy.Plan) error {
+// showLocal prints the plan of this machine, with the command run from the
+// project root.
+func showLocal(ctx context.Context, cmd *cli.Command, cfg *config.Config, p *project.Project) error {
+	fetcher, err := mitamae.NewFetcher(p.Mitamae)
+	if err != nil {
+		return err
+	}
+	d := &deploy.Deployer{
+		Project: p,
+		Fetcher: fetcher,
+		Recipes: cfg.Recipes,
+		Stderr:  cmd.ErrWriter,
+	}
+	arch, plan, err := d.LocalPlan(ctx)
+	if err != nil {
+		return err
+	}
+	return print(cmd.Writer, p, plan, deploy.ShellCommand(p.Root, d.LocalCommand(fetcher.Path(arch), plan)))
+}
+
+func print(w io.Writer, p *project.Project, plan *deploy.Plan, command string) error {
 	domain := plan.Host.Domain
 	if domain == "" {
 		domain = "-"
 	}
-	d := &deploy.Deployer{Project: p}
 	lines := []string{
 		"hostname: " + plan.Host.Name,
 		"domain:   " + domain,
@@ -77,7 +101,7 @@ func print(w io.Writer, p *project.Project, plan *deploy.Plan) error {
 	for _, r := range plan.Recipes {
 		lines = append(lines, "  - "+r)
 	}
-	lines = append(lines, "command:", "  "+d.RemoteCommand(plan))
+	lines = append(lines, "command:", "  "+command)
 	for _, l := range lines {
 		if _, err := fmt.Fprintln(w, l); err != nil {
 			return err

@@ -83,32 +83,50 @@ type Deployer struct {
 	TTY bool
 }
 
-// Local applies the plan of this machine, found in the inventory by its
-// hostname and domain.
-func (d *Deployer) Local(ctx context.Context) error {
+// LocalPlan returns the arch and the plan of this machine, found in the
+// inventory by its hostname and domain.
+func (d *Deployer) LocalPlan(ctx context.Context) (string, *Plan, error) {
 	var out bytes.Buffer
 	if err := d.run(ctx, d.command(ctx, nil, &out, "sh", "-c", identify)); err != nil {
-		return fmt.Errorf("failed to identify this machine: %w", err)
+		return "", nil, fmt.Errorf("failed to identify this machine: %w", err)
 	}
 	_, plan, err := d.plan(ctx, out.String())
 	if err != nil {
-		return err
+		return "", nil, err
 	}
 	arch, err := mitamae.LocalArch()
 	if err != nil {
+		return "", nil, err
+	}
+	return arch, plan, nil
+}
+
+// Local applies the plan of this machine, found in the inventory by its
+// hostname and domain.
+func (d *Deployer) Local(ctx context.Context) error {
+	arch, plan, err := d.LocalPlan(ctx)
+	if err != nil {
 		return err
 	}
+	logging.FromContext(ctx).InfoContext(ctx, "applying to this machine", slog.String("host", plan.Host.FQDN()))
 	bin, err := d.Fetcher.Fetch(ctx, arch)
 	if err != nil {
 		return err
 	}
+	cmd := d.command(ctx, d.Stdin, d.Stdout, d.LocalCommand(bin, plan)...)
+	cmd.Dir = d.Project.Root
+	return d.run(ctx, cmd)
+}
+
+// LocalCommand returns the command line applying plan on this machine with
+// the mitamae binary bin, run from the project root. sudo is prepended unless
+// running as root.
+func (d *Deployer) LocalCommand(bin string, plan *Plan) []string {
 	args := append([]string{bin}, mitamae.LocalArgs(plan.Nodes, plan.Recipes, d.Options)...)
 	if os.Geteuid() != 0 {
 		args = append([]string{"sudo"}, args...)
 	}
-	cmd := d.command(ctx, d.Stdin, d.Stdout, args...)
-	cmd.Dir = d.Project.Root
-	return d.run(ctx, cmd)
+	return args
 }
 
 // Remote copies the project to the ssh destination dest and applies there the
@@ -187,11 +205,16 @@ func (d *Deployer) RsyncArgs(dest string) []string {
 // RemoteCommand returns the shell command applying plan on the remote host.
 func (d *Deployer) RemoteCommand(plan *Plan) string {
 	args := append([]string{"sudo", "./" + path.Join(stateDir, "mitamae")}, mitamae.LocalArgs(plan.Nodes, plan.Recipes, d.Options)...)
+	return ShellCommand(d.Project.Remote.Path, args)
+}
+
+// ShellCommand returns the shell command running args in dir.
+func ShellCommand(dir string, args []string) string {
 	quoted := make([]string, len(args))
 	for i, a := range args {
 		quoted[i] = Quote(a)
 	}
-	return fmt.Sprintf("cd %s && %s", Quote(d.Project.Remote.Path), strings.Join(quoted, " "))
+	return fmt.Sprintf("cd %s && %s", Quote(dir), strings.Join(quoted, " "))
 }
 
 func (d *Deployer) command(ctx context.Context, stdin io.Reader, stdout io.Writer, args ...string) *exec.Cmd {

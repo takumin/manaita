@@ -82,7 +82,7 @@ func TestFetch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if path != filepath.Join(f.CacheDir, "v2.0.3", "mitamae-x86_64-linux") {
+	if path != filepath.Join(f.CacheDir, "v2.0.3", "mitamae-x86_64-linux") || path != f.Path("x86_64") {
 		t.Errorf("unexpected path: %s", path)
 	}
 	info, err := os.Stat(path)
