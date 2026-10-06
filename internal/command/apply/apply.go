@@ -11,6 +11,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/term"
 
 	"github.com/takumin/manaita/internal/command/complete"
 	"github.com/takumin/manaita/internal/config"
@@ -40,11 +41,6 @@ func NewCommands(cfg *config.Config, flags []cli.Flag) *cli.Command {
 			Usage:       "recipe applied instead of the run list (repeatable)",
 			Destination: &cfg.Recipes,
 		},
-		&cli.BoolFlag{
-			Name:        "local",
-			Usage:       "apply to this machine instead of over ssh",
-			Destination: &cfg.Local,
-		},
 		&cli.IntFlag{
 			Name:        "parallel",
 			Aliases:     []string{"j"},
@@ -56,8 +52,8 @@ func NewCommands(cfg *config.Config, flags []cli.Flag) *cli.Command {
 
 	return &cli.Command{
 		Name:          "apply",
-		Usage:         "apply the run list of hosts",
-		ArgsUsage:     "HOST...",
+		Usage:         "apply the run list of hosts, or of this machine without a host",
+		ArgsUsage:     "[HOST...]",
 		Flags:         flags,
 		Action:        action(cfg),
 		ShellComplete: complete.Hosts(cfg, true),
@@ -67,11 +63,10 @@ func NewCommands(cfg *config.Config, flags []cli.Flag) *cli.Command {
 func action(cfg *config.Config) func(ctx context.Context, cmd *cli.Command) error {
 	return func(ctx context.Context, cmd *cli.Command) error {
 		dests := cmd.Args().Slice()
-		switch {
-		case cfg.Local && len(dests) > 0:
-			return errors.New("--local applies to this machine and takes no host")
-		case !cfg.Local && len(dests) == 0:
-			return errors.New("no host given")
+		// Without a host, this machine is applied. A terminal is required so
+		// that a host list expanded to nothing in a script fails instead.
+		if len(dests) == 0 && !isTerminal(cmd.Reader) {
+			return errors.New("no host given: applying to this machine requires a terminal")
 		}
 		if cfg.Parallel < 1 {
 			return fmt.Errorf("invalid --parallel: %d", cfg.Parallel)
@@ -105,7 +100,7 @@ func action(cfg *config.Config) func(ctx context.Context, cmd *cli.Command) erro
 		}
 
 		switch {
-		case cfg.Local:
+		case len(dests) == 0:
 			return d.Local(ctx)
 		case len(dests) == 1:
 			d.TTY = isTerminal(cmd.Reader)
@@ -148,9 +143,5 @@ func parallel(ctx context.Context, d *deploy.Deployer, dests []string, limit int
 
 func isTerminal(r io.Reader) bool {
 	f, ok := r.(*os.File)
-	if !ok {
-		return false
-	}
-	info, err := f.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+	return ok && term.IsTerminal(int(f.Fd())) // #nosec G115 -- a file descriptor fits in an int
 }

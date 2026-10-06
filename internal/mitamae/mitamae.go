@@ -92,7 +92,7 @@ func (f *Fetcher) Fetch(ctx context.Context, arch string) (string, error) {
 	}
 	want = strings.ToLower(strings.TrimPrefix(want, "sha256:"))
 	asset := fmt.Sprintf("mitamae-%s-linux", arch)
-	path := filepath.Join(f.CacheDir, "v"+strings.TrimPrefix(f.Version, "v"), asset)
+	path := f.Path(arch)
 
 	if got, err := fileSHA256(path); err == nil && got == want {
 		return path, nil
@@ -138,6 +138,12 @@ func (f *Fetcher) Fetch(ctx context.Context, arch string) (string, error) {
 		return "", err
 	}
 	return path, nil
+}
+
+// Path returns the path of the cached binary for arch, whether it is
+// downloaded or not.
+func (f *Fetcher) Path(arch string) string {
+	return filepath.Join(f.CacheDir, "v"+strings.TrimPrefix(f.Version, "v"), fmt.Sprintf("mitamae-%s-linux", arch))
 }
 
 func fileSHA256(path string) (string, error) {

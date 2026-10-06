@@ -8,7 +8,6 @@ type Config struct {
 	DryRun          bool
 	MitamaeLogLevel string
 	Recipes         []string
-	Local           bool
 	Parallel        int
 }
 

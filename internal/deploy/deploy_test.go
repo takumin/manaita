@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"reflect"
 	"strings"
@@ -265,6 +266,48 @@ func TestLocal(t *testing.T) {
 	args := strings.Join(runner.cmds[1], " ")
 	if !strings.Contains(args, "/mitamae-") || !strings.HasSuffix(args, "local --dry-run --node-json=nodes/all/c.json --node-yaml=nodes/all/a.yml --node-yaml=nodes/all/b.yml --node-yaml=nodes/hosts/dsk/h.yml helpers/keeper.rb cookbooks/common/sudo/default.rb") {
 		t.Errorf("unexpected command: %s", args)
+	}
+}
+
+func TestLocalPlan(t *testing.T) {
+	p := openProject(t)
+	runner := &fakeRunner{id: "x86_64\nrpi4\nexample.internal\n"}
+	d := newDeployer(t, p, runner)
+	arch, plan, err := d.LocalPlan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want, _ := mitamae.LocalArch(); arch != want {
+		t.Errorf("want arch %s, got %s", want, arch)
+	}
+	if plan.Host.FQDN() != "rpi4.example.internal" {
+		t.Errorf("unexpected host: %s", plan.Host.FQDN())
+	}
+	if len(runner.cmds) != 1 {
+		t.Errorf("only the identification runs: %q", runner.cmds)
+	}
+}
+
+func TestLocalCommand(t *testing.T) {
+	p := openProject(t)
+	d := newDeployer(t, p, &fakeRunner{})
+	_, plan, err := d.LocalPlan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/bin/mitamae", "local", "--dry-run", "--node-json=nodes/all/c.json", "--node-yaml=nodes/all/a.yml", "--node-yaml=nodes/all/b.yml", "--node-yaml=nodes/hosts/dsk/h.yml", "helpers/keeper.rb", "cookbooks/common/sudo/default.rb"}
+	if os.Geteuid() != 0 {
+		want = append([]string{"sudo"}, want...)
+	}
+	if got := d.LocalCommand("/bin/mitamae", plan); !reflect.DeepEqual(got, want) {
+		t.Errorf("want %q, got %q", want, got)
+	}
+}
+
+func TestShellCommand(t *testing.T) {
+	got := deploy.ShellCommand("/my project", []string{"sudo", "a b", "c"})
+	if want := "cd '/my project' && sudo 'a b' c"; got != want {
+		t.Errorf("want %q, got %q", want, got)
 	}
 }
 
