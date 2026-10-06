@@ -12,6 +12,7 @@ import (
 	"github.com/takumin/manaita/internal/command/list"
 	"github.com/takumin/manaita/internal/command/show"
 	"github.com/takumin/manaita/internal/config"
+	"github.com/takumin/manaita/internal/logging"
 	"github.com/takumin/manaita/internal/metadata"
 	"github.com/takumin/manaita/internal/version"
 )
@@ -37,21 +38,6 @@ func Main(stdout io.Writer, stderr io.Writer, stdin io.Reader, args []string) in
 			Sources:     cli.EnvVars("LOG_LEVEL"),
 			Value:       cfg.LogLevel,
 			Destination: &cfg.LogLevel,
-			Action: func(ctx context.Context, cmd *cli.Command, s string) error {
-				switch cfg.LogLevel {
-				case "debug":
-					slog.SetLogLoggerLevel(slog.LevelDebug)
-				case "info":
-					slog.SetLogLoggerLevel(slog.LevelInfo)
-				case "warn":
-					slog.SetLogLoggerLevel(slog.LevelWarn)
-				case "error":
-					slog.SetLogLoggerLevel(slog.LevelError)
-				default:
-					return fmt.Errorf("unknown log level: %s", cfg.LogLevel)
-				}
-				return nil
-			},
 		},
 		&cli.StringFlag{
 			Name:        "log-format",
@@ -60,17 +46,6 @@ func Main(stdout io.Writer, stderr io.Writer, stdin io.Reader, args []string) in
 			Sources:     cli.EnvVars("LOG_FORMAT"),
 			Value:       cfg.LogFormat,
 			Destination: &cfg.LogFormat,
-			Action: func(ctx context.Context, cmd *cli.Command, s string) error {
-				switch cfg.LogFormat {
-				case "text":
-					slog.SetDefault(slog.New(slog.NewTextHandler(cmd.Writer, nil)))
-				case "json":
-					slog.SetDefault(slog.New(slog.NewJSONHandler(cmd.Writer, nil)))
-				default:
-					return fmt.Errorf("unknown log format: %s", cfg.LogFormat)
-				}
-				return nil
-			},
 		},
 		&cli.StringFlag{
 			Name:        "chdir",
@@ -88,6 +63,18 @@ func Main(stdout io.Writer, stderr io.Writer, stdin io.Reader, args []string) in
 		apply.NewCommands(cfg, flags),
 	}
 
+	// The logger is built per run and carried in the context instead of
+	// replacing slog.Default, so that concurrent runs do not share it.
+	logger := slog.New(slog.NewTextHandler(stderr, nil))
+	before := func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
+		l, err := logging.New(cmd.ErrWriter, cfg.LogLevel, cfg.LogFormat)
+		if err != nil {
+			return ctx, err
+		}
+		logger = l
+		return logging.NewContext(ctx, logger), nil
+	}
+
 	// MEMO: Authors field is invalid in urfave/cli/v3 v3.1.0
 	app := &cli.Command{
 		Name:                  metadata.AppName(),
@@ -96,6 +83,7 @@ func Main(stdout io.Writer, stderr io.Writer, stdin io.Reader, args []string) in
 		Flags:                 flags,
 		Commands:              cmds,
 		EnableShellCompletion: true,
+		Before:                before,
 		Reader:                stdin,
 		Writer:                stdout,
 		ErrWriter:             stderr,
@@ -104,7 +92,7 @@ func Main(stdout io.Writer, stderr io.Writer, stdin io.Reader, args []string) in
 
 	ctx := context.Background()
 	if err := app.Run(ctx, args); err != nil {
-		slog.ErrorContext(ctx, "failed application", slog.Any("error", err))
+		logger.ErrorContext(ctx, "failed application", slog.Any("error", err))
 		return ExitNG
 	}
 

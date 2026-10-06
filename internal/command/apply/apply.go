@@ -15,6 +15,7 @@ import (
 
 	"github.com/takumin/manaita/internal/config"
 	"github.com/takumin/manaita/internal/deploy"
+	"github.com/takumin/manaita/internal/logging"
 	"github.com/takumin/manaita/internal/mitamae"
 	"github.com/takumin/manaita/internal/project"
 )
@@ -150,7 +151,7 @@ func parallel(ctx context.Context, d *deploy.Deployer, plans []*deploy.Plan, lim
 			_ = stdout.Flush()
 			_ = stderr.Flush()
 			if err != nil {
-				slog.ErrorContext(ctx, "failed to apply", slog.String("host", plan.Host.Name), slog.Any("error", err))
+				logging.FromContext(ctx).ErrorContext(ctx, "failed to apply", slog.String("host", plan.Host.Name), slog.Any("error", err))
 				errs[i] = fmt.Errorf("%s: %w", plan.Host.Name, err)
 			}
 			return nil
