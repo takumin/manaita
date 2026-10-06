@@ -41,6 +41,12 @@ tasks:
 
   reviewdog:
     internal: true
+    env:
+      # reviewdog reads a runner's stderr together with its stdout. The aqua
+      # shim logs "download and unarchive the package" at INFO the first time
+      # it installs a tool lazily, which breaks parsers such as shfmt's diff
+      # format ("fail to parse diff: no expected hunks") on a fresh runner.
+      AQUA_LOG_LEVEL: warn
     cmds:
     - >-
       reviewdog
