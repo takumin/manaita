@@ -22,8 +22,8 @@ tasks:
   aqua:
     run: once
     sources:
-    - aqua/*.yaml
-    - aqua/**/*.yaml
+    - .aqua/*.yaml
+    - .aqua/**/*.yaml
     generates:
     - .task/.done_{{.TASK}}
     cmds:
