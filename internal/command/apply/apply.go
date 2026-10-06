@@ -13,6 +13,7 @@ import (
 	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/takumin/manaita/internal/command/complete"
 	"github.com/takumin/manaita/internal/config"
 	"github.com/takumin/manaita/internal/deploy"
 	"github.com/takumin/manaita/internal/logging"
@@ -55,11 +56,12 @@ func NewCommands(cfg *config.Config, flags []cli.Flag) *cli.Command {
 	}...)
 
 	return &cli.Command{
-		Name:      "apply",
-		Usage:     "apply the run list of hosts",
-		ArgsUsage: "HOST...",
-		Flags:     flags,
-		Action:    action(cfg),
+		Name:          "apply",
+		Usage:         "apply the run list of hosts",
+		ArgsUsage:     "HOST...",
+		Flags:         flags,
+		Action:        action(cfg),
+		ShellComplete: complete.Hosts(cfg, true),
 	}
 }
 

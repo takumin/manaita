@@ -7,6 +7,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/takumin/manaita/internal/command/complete"
 	"github.com/takumin/manaita/internal/config"
 	"github.com/takumin/manaita/internal/deploy"
 	"github.com/takumin/manaita/internal/project"
@@ -23,11 +24,12 @@ func NewCommands(cfg *config.Config, flags []cli.Flag) *cli.Command {
 	}...)
 
 	return &cli.Command{
-		Name:      "show",
-		Usage:     "show the node files and recipes applied to a host",
-		ArgsUsage: "HOST",
-		Flags:     flags,
-		Action:    action(cfg),
+		Name:          "show",
+		Usage:         "show the node files and recipes applied to a host",
+		ArgsUsage:     "HOST",
+		Flags:         flags,
+		Action:        action(cfg),
+		ShellComplete: complete.Hosts(cfg, false),
 	}
 }
 
