@@ -71,9 +71,32 @@ func TestHosts(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []*project.Host{
-		{Name: "dsk", SSH: "dsk", Hostname: "dsk", RunList: []string{"cookbooks/common/sudo"}},
-		{Name: "empty", SSH: "empty", Hostname: "empty"},
-		{Name: "rpi", SSH: "rpi.example", Hostname: "rpi4", Domain: "example.internal", RunList: []string{"cookbooks/server/dnsmasq/extra"}},
+		{Name: "dsk", RunList: []string{"cookbooks/common/sudo"}, Files: []string{"hosts/all/common.yml", "hosts/hosts/dsk/run_list.yml"}},
+		{Name: "empty", RunList: []string{}, Files: []string{"hosts/all/common.yml", "hosts/hosts/empty/host.yml"}},
+		{Name: "rpi4", RunList: []string{"cookbooks/common/sudo"}, Files: []string{"hosts/all/common.yml", "hosts/hosts/rpi4/run_list.yml", "hosts/hosts/rpi4/z.yaml"}},
+		{
+			Name:    "rpi4",
+			Domain:  "example.internal",
+			RunList: []string{"cookbooks/common/sudo", "cookbooks/server/dnsmasq/extra"},
+			Files: []string{
+				"hosts/all/common.yml",
+				"hosts/domains/example.internal/common.yml",
+				"hosts/hosts/rpi4/run_list.yml",
+				"hosts/hosts/rpi4/z.yaml",
+				"hosts/fqdns/example.internal/rpi4/run_list.yml",
+			},
+		},
+		{
+			Name:    "rpi4",
+			Domain:  "other.internal",
+			RunList: []string{"cookbooks/common/sudo", "cookbooks/server/dnsmasq"},
+			Files: []string{
+				"hosts/all/common.yml",
+				"hosts/hosts/rpi4/run_list.yml",
+				"hosts/hosts/rpi4/z.yaml",
+				"hosts/fqdns/other.internal/rpi4/run_list.yml",
+			},
+		},
 	}
 	if !reflect.DeepEqual(hosts, want) {
 		t.Errorf("want %+v, got %+v", want, hosts)
@@ -81,32 +104,83 @@ func TestHosts(t *testing.T) {
 }
 
 func TestHost(t *testing.T) {
-	p, err := project.Open(testutil.Project(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if h, err := p.Host("rpi"); err != nil || h.SSH != "rpi.example" {
-		t.Errorf("rpi: %+v, %v", h, err)
-	}
-	for _, name := range []string{"", "missing", "../dsk", ".hidden"} {
-		if _, err := p.Host(name); err == nil {
-			t.Errorf("%q: expected an error", name)
-		}
-	}
-}
-
-func TestHostInvalidFile(t *testing.T) {
 	root := testutil.Project(t)
-	testutil.WriteFiles(t, root, map[string]string{"hosts/bad.yml": "run_lists: []\n"})
+	testutil.WriteFiles(t, root, map[string]string{
+		"hosts/all/common.yml":                   "run_list:\n  - helpers/keeper.rb\n",
+		"hosts/fqdns/other.internal/gw/host.yml": "",
+		"hosts/hosts/file":                       "",
+	})
 	p, err := project.Open(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.Host("bad"); err == nil {
-		t.Error("expected an unknown field error")
+	cases := map[string]project.Host{
+		"dsk": {
+			Name:    "dsk",
+			RunList: []string{"helpers/keeper.rb", "cookbooks/common/sudo"},
+			Files:   []string{"hosts/all/common.yml", "hosts/hosts/dsk/run_list.yml"},
+		},
+		// A domain without its own layers still gets the layers of the host.
+		"dsk.unknown.internal": {
+			Name:    "dsk",
+			Domain:  "unknown.internal",
+			RunList: []string{"helpers/keeper.rb", "cookbooks/common/sudo"},
+			Files:   []string{"hosts/all/common.yml", "hosts/hosts/dsk/run_list.yml"},
+		},
+		"gw.other.internal": {
+			Name:    "gw",
+			Domain:  "other.internal",
+			RunList: []string{"helpers/keeper.rb"},
+			Files:   []string{"hosts/all/common.yml", "hosts/fqdns/other.internal/gw/host.yml"},
+		},
 	}
-	if _, err := p.Hosts(); err == nil {
-		t.Error("expected an unknown field error")
+	for fqdn, want := range cases {
+		h, err := p.HostByFQDN(fqdn)
+		if err != nil {
+			t.Errorf("%s: %v", fqdn, err)
+			continue
+		}
+		if !reflect.DeepEqual(*h, want) {
+			t.Errorf("%s: want %+v, got %+v", fqdn, want, *h)
+		}
+		if h.FQDN() != fqdn {
+			t.Errorf("%s: unexpected fqdn %s", fqdn, h.FQDN())
+		}
+	}
+	for _, fqdn := range []string{"", "missing", "gw", "gw.example.internal", ".hidden", "*", "file", "nofiles", "all", "dsk..x", "dsk.a/b"} {
+		if _, err := p.HostByFQDN(fqdn); err == nil {
+			t.Errorf("%q: expected an error", fqdn)
+		}
+	}
+	if _, err := p.Host("../dsk", ""); err == nil {
+		t.Error("expected an invalid hostname error")
+	}
+}
+
+func TestHostInvalidFile(t *testing.T) {
+	cases := map[string]string{
+		"host":   "hosts/hosts/dsk/run_list.yml",
+		"all":    "hosts/all/common.yml",
+		"domain": "hosts/domains/example.internal/common.yml",
+		"fqdn":   "hosts/fqdns/example.internal/rpi4/run_list.yml",
+		"flat":   "hosts/old.yml",
+	}
+	for name, file := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := testutil.Project(t)
+			content := "run_lists: []\n"
+			if name == "flat" {
+				content = ""
+			}
+			testutil.WriteFiles(t, root, map[string]string{file: content})
+			p, err := project.Open(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := p.Hosts(); err == nil {
+				t.Error("expected an error")
+			}
+		})
 	}
 }
 
@@ -122,7 +196,7 @@ func TestNodeFiles(t *testing.T) {
 			{Path: "nodes/all/b.yml", Format: project.FormatYAML},
 			{Path: "nodes/hosts/dsk/h.yml", Format: project.FormatYAML},
 		},
-		"rpi": {
+		"rpi4.example.internal": {
 			{Path: "nodes/all/c.json", Format: project.FormatJSON},
 			{Path: "nodes/all/a.yml", Format: project.FormatYAML},
 			{Path: "nodes/all/b.yml", Format: project.FormatYAML},
@@ -134,7 +208,7 @@ func TestNodeFiles(t *testing.T) {
 	}
 	for name, want := range cases {
 		t.Run(name, func(t *testing.T) {
-			h, err := p.Host(name)
+			h, err := p.HostByFQDN(name)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -154,10 +228,10 @@ func TestNodeFilesErrors(t *testing.T) {
 		nodes []string
 		host  project.Host
 	}{
-		"unknown placeholder": {[]string{"nodes/{fqdn}/*.yml"}, project.Host{Hostname: "a"}},
-		"bad pattern":         {[]string{"nodes/[/*.yml"}, project.Host{Hostname: "a"}},
-		"glob in hostname":    {[]string{"nodes/hosts/{hostname}/*.yml"}, project.Host{Hostname: "*"}},
-		"unsupported file":    {[]string{"nodes/all/*"}, project.Host{Hostname: "a"}},
+		"unknown placeholder": {[]string{"nodes/{fqdn}/*.yml"}, project.Host{Name: "a"}},
+		"bad pattern":         {[]string{"nodes/[/*.yml"}, project.Host{Name: "a"}},
+		"glob in hostname":    {[]string{"nodes/hosts/{hostname}/*.yml"}, project.Host{Name: "*"}},
+		"unsupported file":    {[]string{"nodes/all/*"}, project.Host{Name: "a"}},
 	}
 	root := testutil.Project(t)
 	for name, tt := range cases {
@@ -176,7 +250,7 @@ func TestNodeFilesSkipsDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := &project.Project{Root: root, Nodes: []string{"nodes/all/*.yml"}}
-	got, err := p.NodeFiles(&project.Host{Hostname: "a"})
+	got, err := p.NodeFiles(&project.Host{Name: "a"})
 	if err != nil {
 		t.Fatal(err)
 	}

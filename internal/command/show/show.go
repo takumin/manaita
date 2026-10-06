@@ -25,7 +25,7 @@ func NewCommands(cfg *config.Config, flags []cli.Flag) *cli.Command {
 
 	return &cli.Command{
 		Name:          "show",
-		Usage:         "show the node files and recipes applied to a host",
+		Usage:         "show the node files and recipes applied to a host of the inventory",
 		ArgsUsage:     "HOST",
 		Flags:         flags,
 		Action:        action(cfg),
@@ -42,7 +42,7 @@ func action(cfg *config.Config) func(ctx context.Context, cmd *cli.Command) erro
 		if err != nil {
 			return err
 		}
-		h, err := p.Host(cmd.Args().First())
+		h, err := p.HostByFQDN(cmd.Args().First())
 		if err != nil {
 			return err
 		}
@@ -61,13 +61,15 @@ func print(w io.Writer, p *project.Project, plan *deploy.Plan) error {
 	}
 	d := &deploy.Deployer{Project: p}
 	lines := []string{
-		"name:     " + plan.Host.Name,
-		"ssh:      " + plan.Host.SSH,
-		"hostname: " + plan.Host.Hostname,
+		"hostname: " + plan.Host.Name,
 		"domain:   " + domain,
 		"mitamae:  " + p.Mitamae.Version,
-		"nodes:",
+		"hosts:",
 	}
+	for _, f := range plan.Host.Files {
+		lines = append(lines, "  - "+f)
+	}
+	lines = append(lines, "nodes:")
 	for _, n := range plan.Nodes {
 		lines = append(lines, "  - "+n.Path)
 	}

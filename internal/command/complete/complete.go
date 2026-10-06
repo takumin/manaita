@@ -37,10 +37,10 @@ func Hosts(cfg *config.Config, multiple bool) cli.ShellCompleteFunc {
 			return
 		}
 		for _, h := range hosts {
-			if slices.Contains(args, h.Name) {
+			if slices.Contains(args, h.FQDN()) {
 				continue
 			}
-			fmt.Fprintln(cmd.Root().Writer, h.Name) //nolint:errcheck
+			fmt.Fprintln(cmd.Root().Writer, h.FQDN()) //nolint:errcheck
 		}
 	}
 }

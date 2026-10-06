@@ -47,7 +47,7 @@ func openProject(t *testing.T) *project.Project {
 
 func TestNewPlan(t *testing.T) {
 	p := openProject(t)
-	h, err := p.Host("rpi")
+	h, err := p.HostByFQDN("rpi4.example.internal")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestNewPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"helpers/keeper.rb", "cookbooks/server/dnsmasq/extra.rb"}
+	want := []string{"helpers/keeper.rb", "cookbooks/common/sudo/default.rb", "cookbooks/server/dnsmasq/extra.rb"}
 	if !reflect.DeepEqual(plan.Recipes, want) {
 		t.Errorf("want %v, got %v", want, plan.Recipes)
 	}
@@ -79,7 +79,7 @@ func TestNewPlan(t *testing.T) {
 	if _, err := deploy.NewPlan(p, h, []string{"missing"}); err == nil {
 		t.Error("expected a missing recipe error")
 	}
-	empty, err := p.Host("empty")
+	empty, err := p.HostByFQDN("empty")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,6 +98,8 @@ type fakeRunner struct {
 	stdin []bool
 	dirs  []string
 	fail  string
+	// id is the output of the identification, dsk on aarch64 by default.
+	id string
 }
 
 func (r *fakeRunner) Run(_ context.Context, cmd *exec.Cmd) error {
@@ -109,8 +111,12 @@ func (r *fakeRunner) Run(_ context.Context, cmd *exec.Cmd) error {
 	if r.fail != "" && strings.Contains(strings.Join(cmd.Args, " "), r.fail) {
 		return errors.New("failed")
 	}
-	if cmd.Args[0] == "ssh" && strings.HasPrefix(cmd.Args[len(cmd.Args)-1], "uname -m") {
-		cmd.Stdout.Write([]byte("aarch64\n")) //nolint:errcheck,gosec
+	if strings.HasPrefix(cmd.Args[len(cmd.Args)-1], "uname -m") {
+		id := r.id
+		if id == "" {
+			id = "aarch64\ndsk\n"
+		}
+		cmd.Stdout.Write([]byte(id)) //nolint:errcheck,gosec
 	}
 	return nil
 }
@@ -141,33 +147,27 @@ func newDeployer(t *testing.T, p *project.Project, runner deploy.Runner) *deploy
 	}
 }
 
+const identify = "uname -m && hostname -s && { dnsdomainname 2>/dev/null || true; }"
+
 func TestRemote(t *testing.T) {
 	p := openProject(t)
-	h, err := p.Host("rpi")
-	if err != nil {
-		t.Fatal(err)
-	}
-	plan, err := deploy.NewPlan(p, h, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runner := &fakeRunner{}
+	runner := &fakeRunner{id: "aarch64\nrpi4\nexample.internal\n"}
 	d := newDeployer(t, p, runner)
 	d.TTY = true
-	if err := d.Remote(context.Background(), plan); err != nil {
+	if err := d.Remote(context.Background(), "rpi.example"); err != nil {
 		t.Fatal(err)
 	}
 
 	bin := d.Fetcher.CacheDir + "/v2.0.3/mitamae-aarch64-linux"
 	want := [][]string{
-		{"ssh", "rpi.example", "uname -m && mkdir -p mitamae/.manaita"},
+		{"ssh", "rpi.example", identify + " && mkdir -p mitamae/.manaita"},
 		{"rsync", "-a", "--delete", "--exclude=/.manaita/", "--exclude=/.git/", p.Root + "/", "rpi.example:mitamae/"},
 		{"rsync", "-a", bin, "rpi.example:mitamae/.manaita/mitamae"},
 		{"ssh", "-t", "rpi.example", "cd mitamae && sudo ./.manaita/mitamae local --dry-run" +
 			" --node-json=nodes/all/c.json --node-yaml=nodes/all/a.yml --node-yaml=nodes/all/b.yml" +
 			" --node-yaml=nodes/domains/example.internal/d.yml --node-yaml=nodes/domains/example.internal/inventory/x.yml" +
 			" --node-yaml=nodes/hosts/rpi4/h.yml --node-yaml=nodes/fqdns/example.internal/rpi4/f.yml" +
-			" helpers/keeper.rb cookbooks/server/dnsmasq/extra.rb"},
+			" helpers/keeper.rb cookbooks/common/sudo/default.rb cookbooks/server/dnsmasq/extra.rb"},
 	}
 	if !reflect.DeepEqual(runner.cmds, want) {
 		t.Errorf("want\n%q\ngot\n%q", want, runner.cmds)
@@ -177,15 +177,30 @@ func TestRemote(t *testing.T) {
 	}
 }
 
+func TestRemoteDomains(t *testing.T) {
+	p := openProject(t)
+	cases := map[string]string{
+		"aarch64\nrpi4\nexample.internal\n": "cookbooks/common/sudo/default.rb cookbooks/server/dnsmasq/extra.rb",
+		"aarch64\nrpi4\nother.internal\n":   "cookbooks/common/sudo/default.rb cookbooks/server/dnsmasq/default.rb",
+		"aarch64\nrpi4\n":                   "cookbooks/common/sudo/default.rb",
+		"aarch64\nrpi4\nunknown.internal\n": "cookbooks/common/sudo/default.rb",
+	}
+	for id, want := range cases {
+		runner := &fakeRunner{id: id}
+		if err := newDeployer(t, p, runner).Remote(context.Background(), "rpi"); err != nil {
+			t.Fatal(err)
+		}
+		last := runner.cmds[len(runner.cmds)-1]
+		if !strings.HasSuffix(last[len(last)-1], " helpers/keeper.rb "+want) {
+			t.Errorf("%q: unexpected command %q", id, last)
+		}
+	}
+}
+
 func TestRemoteNoTTY(t *testing.T) {
 	p := openProject(t)
-	h, _ := p.Host("dsk")
-	plan, err := deploy.NewPlan(p, h, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	runner := &fakeRunner{}
-	if err := newDeployer(t, p, runner).Remote(context.Background(), plan); err != nil {
+	if err := newDeployer(t, p, runner).Remote(context.Background(), "dsk"); err != nil {
 		t.Fatal(err)
 	}
 	last := runner.cmds[len(runner.cmds)-1]
@@ -194,16 +209,38 @@ func TestRemoteNoTTY(t *testing.T) {
 	}
 }
 
-func TestRemoteErrors(t *testing.T) {
+func TestRemoteRecipes(t *testing.T) {
 	p := openProject(t)
-	h, _ := p.Host("dsk")
-	plan, err := deploy.NewPlan(p, h, nil)
-	if err != nil {
+	runner := &fakeRunner{}
+	d := newDeployer(t, p, runner)
+	d.Recipes = []string{"cookbooks/server/dnsmasq"}
+	if err := d.Remote(context.Background(), "dsk"); err != nil {
 		t.Fatal(err)
 	}
+	last := runner.cmds[len(runner.cmds)-1]
+	if !strings.HasSuffix(last[len(last)-1], " helpers/keeper.rb cookbooks/server/dnsmasq/default.rb") {
+		t.Errorf("unexpected command: %q", last)
+	}
+}
+
+func TestRemoteErrors(t *testing.T) {
+	p := openProject(t)
 	for _, fail := range []string{"uname", "--delete", "/.manaita/mitamae", "sudo"} {
 		t.Run(fail, func(t *testing.T) {
-			if err := newDeployer(t, p, &fakeRunner{fail: fail}).Remote(context.Background(), plan); err == nil {
+			if err := newDeployer(t, p, &fakeRunner{fail: fail}).Remote(context.Background(), "dsk"); err == nil {
+				t.Error("expected an error")
+			}
+		})
+	}
+	ids := map[string]string{
+		"no hostname":    "aarch64\n",
+		"unknown host":   "aarch64\nmissing\n",
+		"empty run list": "aarch64\nempty\n",
+		"unknown arch":   "riscv64\ndsk\n",
+	}
+	for name, id := range ids {
+		t.Run(name, func(t *testing.T) {
+			if err := newDeployer(t, p, &fakeRunner{id: id}).Remote(context.Background(), "dsk"); err == nil {
 				t.Error("expected an error")
 			}
 		})
@@ -211,44 +248,33 @@ func TestRemoteErrors(t *testing.T) {
 
 	d := newDeployer(t, p, &fakeRunner{})
 	delete(d.Fetcher.Checksums, "aarch64")
-	if err := d.Remote(context.Background(), plan); err == nil {
+	if err := d.Remote(context.Background(), "dsk"); err == nil {
 		t.Error("expected a missing checksum error")
-	}
-}
-
-type archRunner struct{}
-
-func (r *archRunner) Run(ctx context.Context, cmd *exec.Cmd) error {
-	cmd.Stdout.Write([]byte("riscv64\n")) //nolint:errcheck,gosec
-	return nil
-}
-
-func TestRemoteUnsupportedArch(t *testing.T) {
-	p := openProject(t)
-	h, _ := p.Host("dsk")
-	plan, _ := deploy.NewPlan(p, h, nil)
-	if err := newDeployer(t, p, &archRunner{}).Remote(context.Background(), plan); err == nil {
-		t.Error("expected an unsupported arch error")
 	}
 }
 
 func TestLocal(t *testing.T) {
 	p := openProject(t)
-	h, _ := p.Host("dsk")
-	plan, err := deploy.NewPlan(p, h, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	runner := &fakeRunner{}
-	if err := newDeployer(t, p, runner).Local(context.Background(), plan); err != nil {
+	if err := newDeployer(t, p, runner).Local(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.cmds) != 1 || runner.dirs[0] != p.Root {
+	if len(runner.cmds) != 2 || !reflect.DeepEqual(runner.cmds[0], []string{"sh", "-c", identify}) || runner.dirs[1] != p.Root {
 		t.Fatalf("unexpected commands: %q in %v", runner.cmds, runner.dirs)
 	}
-	args := strings.Join(runner.cmds[0], " ")
+	args := strings.Join(runner.cmds[1], " ")
 	if !strings.Contains(args, "/mitamae-") || !strings.HasSuffix(args, "local --dry-run --node-json=nodes/all/c.json --node-yaml=nodes/all/a.yml --node-yaml=nodes/all/b.yml --node-yaml=nodes/hosts/dsk/h.yml helpers/keeper.rb cookbooks/common/sudo/default.rb") {
 		t.Errorf("unexpected command: %s", args)
+	}
+}
+
+func TestLocalErrors(t *testing.T) {
+	p := openProject(t)
+	if err := newDeployer(t, p, &fakeRunner{fail: "uname"}).Local(context.Background()); err == nil {
+		t.Error("expected an identification error")
+	}
+	if err := newDeployer(t, p, &fakeRunner{id: "x86_64\nmissing\n"}).Local(context.Background()); err == nil {
+		t.Error("expected an unknown host error")
 	}
 }
 

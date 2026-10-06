@@ -57,18 +57,18 @@ func TestSubcommands(t *testing.T) {
 		exit   int
 		stdout []string
 	}{
-		"list":                  {[]string{"list"}, command.ExitOK, []string{"NAME", "rpi    rpi.example  rpi4      example.internal  1"}},
+		"list":                  {[]string{"list"}, command.ExitOK, []string{"NAME", "rpi4.example.internal  2", "rpi4.other.internal    2", "empty                  0"}},
 		"list outside project":  {[]string{"list", "-C", "/"}, command.ExitNG, nil},
-		"show":                  {[]string{"show", "rpi"}, command.ExitOK, []string{"ssh:      rpi.example", "  - nodes/fqdns/example.internal/rpi4/f.yml", "  - cookbooks/server/dnsmasq/extra.rb", "cd mitamae && sudo"}},
+		"show":                  {[]string{"show", "rpi4.example.internal"}, command.ExitOK, []string{"hostname: rpi4", "domain:   example.internal", "  - hosts/fqdns/example.internal/rpi4/run_list.yml", "  - nodes/fqdns/example.internal/rpi4/f.yml", "  - cookbooks/server/dnsmasq/extra.rb", "cd mitamae && sudo"}},
 		"show recipe":           {[]string{"show", "-r", "cookbooks/common/sudo", "dsk"}, command.ExitOK, []string{"domain:   -", "  - cookbooks/common/sudo/default.rb"}},
 		"show no host":          {[]string{"show"}, command.ExitNG, nil},
 		"show unknown host":     {[]string{"show", "missing"}, command.ExitNG, nil},
 		"show empty run list":   {[]string{"show", "empty"}, command.ExitNG, nil},
 		"apply no host":         {[]string{"apply"}, command.ExitNG, nil},
-		"apply unknown host":    {[]string{"apply", "missing"}, command.ExitNG, nil},
+		"apply outside project": {[]string{"apply", "-C", "/", "dsk"}, command.ExitNG, nil},
 		"apply missing recipe":  {[]string{"apply", "-r", "missing", "dsk"}, command.ExitNG, nil},
-		"apply local two hosts": {[]string{"apply", "--local", "dsk", "rpi"}, command.ExitNG, nil},
-		"apply bad parallel":    {[]string{"apply", "-j", "0", "dsk", "rpi"}, command.ExitNG, nil},
+		"apply local with host": {[]string{"apply", "--local", "dsk"}, command.ExitNG, nil},
+		"apply bad parallel":    {[]string{"apply", "-j", "0", "dsk", "rpi4"}, command.ExitNG, nil},
 	}
 
 	for name, tt := range cases {
@@ -98,11 +98,11 @@ func TestCompletion(t *testing.T) {
 		args   []string
 		stdout string
 	}{
-		"show":            {[]string{"show"}, "dsk\nempty\nrpi\n"},
+		"show":            {[]string{"show"}, "dsk\nempty\nrpi4\nrpi4.example.internal\nrpi4.other.internal\n"},
 		"show given":      {[]string{"show", "dsk"}, ""},
-		"apply":           {[]string{"apply"}, "dsk\nempty\nrpi\n"},
-		"apply given":     {[]string{"apply", "-n", "dsk"}, "empty\nrpi\n"},
-		"apply flag":      {[]string{"apply", "--lo"}, "--log-level:log level\n--log-format:log format\n--local:apply to this machine instead of over ssh (HOST defaults to the short hostname)\n"},
+		"apply":           {[]string{"apply"}, "dsk\nempty\nrpi4\nrpi4.example.internal\nrpi4.other.internal\n"},
+		"apply given":     {[]string{"apply", "-n", "dsk"}, "empty\nrpi4\nrpi4.example.internal\nrpi4.other.internal\n"},
+		"apply flag":      {[]string{"apply", "--lo"}, "--log-level:log level\n--log-format:log format\n--local:apply to this machine instead of over ssh\n"},
 		"apply flag only": {[]string{"apply", "-j"}, ""},
 	}
 

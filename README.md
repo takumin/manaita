@@ -20,13 +20,13 @@ The node attribute files are passed to mitamae as they are, so they merge exactl
 
 ```sh
 manaita list                              # hosts of the inventory
-manaita show dsk                          # node files, recipes and command of a host
-manaita apply dsk                         # apply the run list over ssh
+manaita show dsk.metal.internal           # node files, recipes and command of a host
+manaita apply dsk                         # apply the run list over ssh (any ssh destination)
 manaita apply -n dsk                      # dry run
 manaita apply -L debug dsk                # mitamae debug log
 manaita apply -r cookbooks/server/nginx dsk  # apply a recipe instead of the run list
 manaita apply -j 4 rpi4-8g-{1..4}         # several hosts in parallel
-manaita apply --local                     # apply to this machine, named by its short hostname
+manaita apply --local                     # apply to this machine
 ```
 
 `-C DIR` selects the project; by default it is found by walking up from the current directory.
@@ -61,19 +61,39 @@ remote:
     - /.git/
 ```
 
-Each host is a file of the inventory, named after the host:
+The inventory is layered like the node files, from the least to the most specific:
+
+```
+hosts/
+├── all/*.yml                          # every host
+├── domains/{domain}/*.yml             # the hosts of a domain
+├── hosts/{hostname}/*.yml             # a host, whatever its domain
+└── fqdns/{domain}/{hostname}/*.yml    # a host of a domain
+```
+
+`manaita apply` asks the host for its short hostname (`hostname -s`) and its domain (`dnsdomainname`) before copying anything,
+and picks the layers with them, so a hostname can have a different run list in each domain.
+The host must be declared by a directory of `hosts/` or `fqdns/{domain}/` holding at least one file.
+The files are merged layer by layer and, within a layer, in the order of their names:
+the run lists are concatenated, skipping the recipes already listed.
 
 ```yaml
-# hosts/rpi4-8g-1.yml
-ssh: rpi4-8g-1.metal.internal # ssh destination (default: the file name)
-hostname: rpi4-8g-1 # used in the node patterns (default: the file name)
-domain: metal.internal # used in the node patterns
+# hosts/all/common.yml
 run_list:
   - cookbooks/common/sudo # a directory runs its default.rb
+
+# hosts/domains/metal.internal/common.yml
+run_list:
+  - cookbooks/common/systemd
+
+# hosts/fqdns/metal.internal/rpi4-8g-1/host.yml
+run_list:
   - cookbooks/server/knot-resolver
   - roles/rpi4-8g.rb
 ```
 
+`manaita list` names the hosts by their FQDN, or their hostname alone for `hosts/{hostname}/` which applies in any domain.
+`manaita show` takes such a name, without connecting, and lists the inventory files merged into the host.
 A node file matched by several patterns, directly or through a symlink, is passed only once.
 The binaries are downloaded from the mitamae releases into the user cache directory and verified against their checksums.
 The remote user must be able to run `sudo`; with a single host and a terminal, sudo can prompt for a password.

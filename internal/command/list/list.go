@@ -32,13 +32,9 @@ func action(cfg *config.Config) func(ctx context.Context, cmd *cli.Command) erro
 			return err
 		}
 		w := tabwriter.NewWriter(cmd.Writer, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tSSH\tHOSTNAME\tDOMAIN\tRECIPES") //nolint:errcheck
+		fmt.Fprintln(w, "NAME\tRECIPES") //nolint:errcheck
 		for _, h := range hosts {
-			domain := h.Domain
-			if domain == "" {
-				domain = "-"
-			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\n", h.Name, h.SSH, h.Hostname, domain, len(h.RunList)) //nolint:errcheck
+			fmt.Fprintf(w, "%s\t%d\n", h.FQDN(), len(h.RunList)) //nolint:errcheck
 		}
 		return w.Flush()
 	}
