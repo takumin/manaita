@@ -7,11 +7,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path"
 	"strings"
 
+	"github.com/takumin/manaita/internal/logging"
 	"github.com/takumin/manaita/internal/mitamae"
 	"github.com/takumin/manaita/internal/project"
 )
@@ -19,6 +21,10 @@ import (
 // stateDir is the directory, relative to the remote project, holding the
 // files manaita copies besides the project itself.
 const stateDir = ".manaita"
+
+// identify prints the arch, the short hostname and the domain of a machine,
+// one per line. The domain line is missing when the machine has none.
+const identify = "uname -m && hostname -s && { dnsdomainname 2>/dev/null || true; }"
 
 // Plan is what is applied to a host.
 type Plan struct {
@@ -38,11 +44,11 @@ func NewPlan(p *project.Project, h *project.Host, recipes []string) (*Plan, erro
 		recipes = h.RunList
 	}
 	if len(recipes) == 0 {
-		return nil, fmt.Errorf("host %s has no run list", h.Name)
+		return nil, fmt.Errorf("host %s has no run list", h.FQDN())
 	}
 	resolved, err := p.ResolveRecipes(append(append([]string{}, p.Prelude...), recipes...))
 	if err != nil {
-		return nil, fmt.Errorf("host %s: %w", h.Name, err)
+		return nil, fmt.Errorf("host %s: %w", h.FQDN(), err)
 	}
 	return &Plan{Host: h, Nodes: nodes, Recipes: resolved}, nil
 }
@@ -66,6 +72,8 @@ type Deployer struct {
 	Fetcher *mitamae.Fetcher
 	Options mitamae.Options
 	Runner  Runner
+	// Recipes override the run list of the hosts when not empty.
+	Recipes []string
 
 	Stdin  io.Reader
 	Stdout io.Writer
@@ -75,8 +83,17 @@ type Deployer struct {
 	TTY bool
 }
 
-// Local applies plan to this machine.
-func (d *Deployer) Local(ctx context.Context, plan *Plan) error {
+// Local applies the plan of this machine, found in the inventory by its
+// hostname and domain.
+func (d *Deployer) Local(ctx context.Context) error {
+	var out bytes.Buffer
+	if err := d.run(ctx, d.command(ctx, nil, &out, "sh", "-c", identify)); err != nil {
+		return fmt.Errorf("failed to identify this machine: %w", err)
+	}
+	_, plan, err := d.plan(ctx, out.String())
+	if err != nil {
+		return err
+	}
 	arch, err := mitamae.LocalArch()
 	if err != nil {
 		return err
@@ -94,18 +111,22 @@ func (d *Deployer) Local(ctx context.Context, plan *Plan) error {
 	return d.run(ctx, cmd)
 }
 
-// Remote copies the project to the host of plan and applies plan there.
-func (d *Deployer) Remote(ctx context.Context, plan *Plan) error {
-	dest := plan.Host.SSH
+// Remote copies the project to the ssh destination dest and applies there the
+// plan of the host, found in the inventory by its hostname and domain.
+func (d *Deployer) Remote(ctx context.Context, dest string) error {
 	dir := d.Project.Remote.Path
 	state := path.Join(dir, stateDir)
 
 	var out bytes.Buffer
-	prepare := fmt.Sprintf("uname -m && mkdir -p %s", Quote(state))
+	prepare := fmt.Sprintf("%s && mkdir -p %s", identify, Quote(state))
 	if err := d.run(ctx, d.command(ctx, nil, &out, "ssh", dest, prepare)); err != nil {
 		return fmt.Errorf("failed to prepare %s: %w", dest, err)
 	}
-	arch, err := mitamae.Arch(firstLine(out.String()))
+	machine, plan, err := d.plan(ctx, out.String())
+	if err != nil {
+		return fmt.Errorf("%s: %w", dest, err)
+	}
+	arch, err := mitamae.Arch(machine)
 	if err != nil {
 		return fmt.Errorf("%s: %w", dest, err)
 	}
@@ -129,6 +150,29 @@ func (d *Deployer) Remote(ctx context.Context, plan *Plan) error {
 	}
 	ssh = append(ssh, dest, d.RemoteCommand(plan))
 	return d.run(ctx, d.command(ctx, stdin, d.Stdout, ssh...))
+}
+
+// plan returns the arch and the plan of the machine identified by out, the
+// output of identify.
+func (d *Deployer) plan(ctx context.Context, out string) (string, *Plan, error) {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) < 2 {
+		return "", nil, fmt.Errorf("unexpected identification: %q", out)
+	}
+	name, domain := strings.TrimSpace(lines[1]), ""
+	if len(lines) > 2 {
+		domain = strings.TrimSpace(lines[2])
+	}
+	logging.FromContext(ctx).InfoContext(ctx, "identified the host", slog.String("hostname", name), slog.String("domain", domain))
+	h, err := d.Project.Host(name, domain)
+	if err != nil {
+		return "", nil, err
+	}
+	plan, err := NewPlan(d.Project, h, d.Recipes)
+	if err != nil {
+		return "", nil, err
+	}
+	return strings.TrimSpace(lines[0]), plan, nil
 }
 
 // RsyncArgs returns the command line copying the project to dest.
@@ -164,11 +208,6 @@ func (d *Deployer) run(ctx context.Context, cmd *exec.Cmd) error {
 		runner = ExecRunner{}
 	}
 	return runner.Run(ctx, cmd)
-}
-
-func firstLine(s string) string {
-	line, _, _ := strings.Cut(s, "\n")
-	return strings.TrimSpace(line)
 }
 
 // Quote quotes s for a POSIX shell.

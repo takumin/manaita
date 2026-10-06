@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"strings"
 	"sync"
 
 	"github.com/urfave/cli/v3"
@@ -43,7 +42,7 @@ func NewCommands(cfg *config.Config, flags []cli.Flag) *cli.Command {
 		},
 		&cli.BoolFlag{
 			Name:        "local",
-			Usage:       "apply to this machine instead of over ssh (HOST defaults to the short hostname)",
+			Usage:       "apply to this machine instead of over ssh",
 			Destination: &cfg.Local,
 		},
 		&cli.IntFlag{
@@ -67,21 +66,11 @@ func NewCommands(cfg *config.Config, flags []cli.Flag) *cli.Command {
 
 func action(cfg *config.Config) func(ctx context.Context, cmd *cli.Command) error {
 	return func(ctx context.Context, cmd *cli.Command) error {
-		names := cmd.Args().Slice()
-		if cfg.Local {
-			switch len(names) {
-			case 0:
-				hostname, err := os.Hostname()
-				if err != nil {
-					return fmt.Errorf("failed to get the hostname: %w", err)
-				}
-				name, _, _ := strings.Cut(hostname, ".")
-				names = []string{name}
-			case 1:
-			default:
-				return errors.New("--local applies to a single host")
-			}
-		} else if len(names) == 0 {
+		dests := cmd.Args().Slice()
+		switch {
+		case cfg.Local && len(dests) > 0:
+			return errors.New("--local applies to this machine and takes no host")
+		case !cfg.Local && len(dests) == 0:
 			return errors.New("no host given")
 		}
 		if cfg.Parallel < 1 {
@@ -92,17 +81,10 @@ func action(cfg *config.Config) func(ctx context.Context, cmd *cli.Command) erro
 		if err != nil {
 			return err
 		}
-		plans := make([]*deploy.Plan, 0, len(names))
-		for _, name := range names {
-			h, err := p.Host(name)
-			if err != nil {
-				return err
-			}
-			plan, err := deploy.NewPlan(p, h, cfg.Recipes)
-			if err != nil {
-				return err
-			}
-			plans = append(plans, plan)
+		// The hosts are only known once connected, so the recipes given are
+		// checked beforehand.
+		if _, err := p.ResolveRecipes(cfg.Recipes); err != nil {
+			return err
 		}
 
 		fetcher, err := mitamae.NewFetcher(p.Mitamae)
@@ -116,45 +98,46 @@ func action(cfg *config.Config) func(ctx context.Context, cmd *cli.Command) erro
 				DryRun:   cfg.DryRun,
 				LogLevel: cfg.MitamaeLogLevel,
 			},
-			Stdin:  cmd.Reader,
-			Stdout: cmd.Writer,
-			Stderr: cmd.ErrWriter,
+			Recipes: cfg.Recipes,
+			Stdin:   cmd.Reader,
+			Stdout:  cmd.Writer,
+			Stderr:  cmd.ErrWriter,
 		}
 
 		switch {
 		case cfg.Local:
-			return d.Local(ctx, plans[0])
-		case len(plans) == 1:
+			return d.Local(ctx)
+		case len(dests) == 1:
 			d.TTY = isTerminal(cmd.Reader)
-			return d.Remote(ctx, plans[0])
+			return d.Remote(ctx, dests[0])
 		default:
-			return parallel(ctx, d, plans, cfg.Parallel)
+			return parallel(ctx, d, dests, cfg.Parallel)
 		}
 	}
 }
 
-// parallel applies plans to their hosts concurrently, prefixing the output
-// with the host name. A failing host does not stop the others.
-func parallel(ctx context.Context, d *deploy.Deployer, plans []*deploy.Plan, limit int) error {
+// parallel applies to the ssh destinations dests concurrently, prefixing the
+// output with the destination. A failing host does not stop the others.
+func parallel(ctx context.Context, d *deploy.Deployer, dests []string, limit int) error {
 	var mu sync.Mutex
 	g := errgroup.Group{}
 	g.SetLimit(limit)
-	errs := make([]error, len(plans))
-	for i, plan := range plans {
+	errs := make([]error, len(dests))
+	for i, dest := range dests {
 		g.Go(func() error {
-			prefix := fmt.Sprintf("[%s] ", plan.Host.Name)
+			prefix := fmt.Sprintf("[%s] ", dest)
 			stdout := deploy.NewPrefixWriter(d.Stdout, &mu, prefix)
 			stderr := deploy.NewPrefixWriter(d.Stderr, &mu, prefix)
 			hd := *d
 			hd.Stdin = nil
 			hd.Stdout = stdout
 			hd.Stderr = stderr
-			err := hd.Remote(ctx, plan)
+			err := hd.Remote(ctx, dest)
 			_ = stdout.Flush()
 			_ = stderr.Flush()
 			if err != nil {
-				logging.FromContext(ctx).ErrorContext(ctx, "failed to apply", slog.String("host", plan.Host.Name), slog.Any("error", err))
-				errs[i] = fmt.Errorf("%s: %w", plan.Host.Name, err)
+				logging.FromContext(ctx).ErrorContext(ctx, "failed to apply", slog.String("host", dest), slog.Any("error", err))
+				errs[i] = fmt.Errorf("%s: %w", dest, err)
 			}
 			return nil
 		})

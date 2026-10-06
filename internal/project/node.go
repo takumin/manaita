@@ -28,7 +28,7 @@ var placeholder = regexp.MustCompile(`\{([a-z]+)\}`)
 // symlink, is only returned the first time.
 func (p *Project) NodeFiles(h *Host) ([]NodeFile, error) {
 	vars := map[string]string{
-		"hostname": h.Hostname,
+		"hostname": h.Name,
 		"domain":   h.Domain,
 	}
 	files := []NodeFile{}
