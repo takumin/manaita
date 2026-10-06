@@ -22,12 +22,13 @@ The node attribute files are passed to mitamae as they are, so they merge exactl
 manaita list                              # hosts of the inventory
 manaita show                              # node files, recipes and command of this machine
 manaita show dsk.metal.internal           # node files, recipes and command of a host
+manaita plan                              # changes apply would make to this machine (mitamae dry run)
+manaita plan dsk                          # changes apply would make to a host
+manaita apply                             # apply to this machine
 manaita apply dsk                         # apply the run list over ssh (any ssh destination)
-manaita apply -n dsk                      # dry run
 manaita apply -L debug dsk                # mitamae debug log
 manaita apply -r cookbooks/server/nginx dsk  # apply a recipe instead of the run list
 manaita apply -j 4 rpi4-8g-{1..4}         # several hosts in parallel
-manaita apply                             # apply to this machine
 ```
 
 `-C DIR` selects the project; by default it is found by walking up from the current directory.
@@ -95,7 +96,8 @@ run_list:
 
 `manaita list` names the hosts by their FQDN, or their hostname alone for `hosts/{hostname}/` which applies in any domain.
 `manaita show` takes such a name, without connecting, and lists the inventory files merged into the host.
-Without a name, `show` and `apply` identify this machine by its hostname and domain, and apply runs mitamae from the project in place.
+`manaita plan` takes the same arguments and flags as `apply`, and runs mitamae with `--dry-run`.
+Without a name, `show`, `plan` and `apply` identify this machine by its hostname and domain, and apply runs mitamae from the project in place.
 Applying to this machine needs a terminal, so that a host list expanded to nothing in a script fails instead.
 A node file matched by several patterns, directly or through a symlink, is passed only once.
 The binaries are downloaded from the mitamae releases into the user cache directory and verified against their checksums.

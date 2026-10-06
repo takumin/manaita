@@ -108,7 +108,11 @@ func (d *Deployer) Local(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	logging.FromContext(ctx).InfoContext(ctx, "applying to this machine", slog.String("host", plan.Host.FQDN()))
+	msg := "applying to this machine"
+	if d.Options.DryRun {
+		msg = "planning on this machine"
+	}
+	logging.FromContext(ctx).InfoContext(ctx, msg, slog.String("host", plan.Host.FQDN()))
 	bin, err := d.Fetcher.Fetch(ctx, arch)
 	if err != nil {
 		return err

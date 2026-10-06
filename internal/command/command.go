@@ -10,6 +10,7 @@ import (
 
 	"github.com/takumin/manaita/internal/command/apply"
 	"github.com/takumin/manaita/internal/command/list"
+	"github.com/takumin/manaita/internal/command/plan"
 	"github.com/takumin/manaita/internal/command/show"
 	"github.com/takumin/manaita/internal/config"
 	"github.com/takumin/manaita/internal/logging"
@@ -60,6 +61,7 @@ func Main(stdout io.Writer, stderr io.Writer, stdin io.Reader, args []string) in
 	cmds := []*cli.Command{
 		list.NewCommands(cfg, flags),
 		show.NewCommands(cfg, flags),
+		plan.NewCommands(cfg, flags),
 		apply.NewCommands(cfg, flags),
 	}
 
