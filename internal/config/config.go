@@ -3,7 +3,13 @@ package config
 type Config struct {
 	LogLevel  string
 	LogFormat string
-	Variable  string
+	Chdir     string
+
+	DryRun          bool
+	MitamaeLogLevel string
+	Recipes         []string
+	Local           bool
+	Parallel        int
 }
 
 func NewConfig(opts ...Option) *Config {

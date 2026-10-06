@@ -16,8 +16,14 @@ func (o LogFormat) Apply(c *Config) {
 	c.LogFormat = string(o)
 }
 
-type Variable string
+type Chdir string
 
-func (o Variable) Apply(c *Config) {
-	c.Variable = string(o)
+func (o Chdir) Apply(c *Config) {
+	c.Chdir = string(o)
+}
+
+type Parallel int
+
+func (o Parallel) Apply(c *Config) {
+	c.Parallel = int(o)
 }

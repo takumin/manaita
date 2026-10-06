@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/takumin/manaita/internal/command"
+	"github.com/takumin/manaita/internal/testutil"
 )
 
 func TestRun(t *testing.T) {
@@ -42,6 +43,48 @@ func TestRun(t *testing.T) {
 				t.Error("unexpected error:", stdout, stderr)
 			case tt.exit == command.ExitNG && exit == command.ExitOK:
 				t.Error("unexpected error:", stdout, stderr)
+			}
+		})
+	}
+}
+
+func TestSubcommands(t *testing.T) {
+	t.Parallel()
+
+	root := testutil.Project(t)
+	cases := map[string]struct {
+		args   []string
+		exit   int
+		stdout []string
+	}{
+		"list":                  {[]string{"list"}, command.ExitOK, []string{"NAME", "rpi    rpi.example  rpi4      example.internal  1"}},
+		"list outside project":  {[]string{"list", "-C", "/"}, command.ExitNG, nil},
+		"show":                  {[]string{"show", "rpi"}, command.ExitOK, []string{"ssh:      rpi.example", "  - nodes/fqdns/example.internal/rpi4/f.yml", "  - cookbooks/server/dnsmasq/extra.rb", "cd mitamae && sudo"}},
+		"show recipe":           {[]string{"show", "-r", "cookbooks/common/sudo", "dsk"}, command.ExitOK, []string{"domain:   -", "  - cookbooks/common/sudo/default.rb"}},
+		"show no host":          {[]string{"show"}, command.ExitNG, nil},
+		"show unknown host":     {[]string{"show", "missing"}, command.ExitNG, nil},
+		"show empty run list":   {[]string{"show", "empty"}, command.ExitNG, nil},
+		"apply no host":         {[]string{"apply"}, command.ExitNG, nil},
+		"apply unknown host":    {[]string{"apply", "missing"}, command.ExitNG, nil},
+		"apply missing recipe":  {[]string{"apply", "-r", "missing", "dsk"}, command.ExitNG, nil},
+		"apply local two hosts": {[]string{"apply", "--local", "dsk", "rpi"}, command.ExitNG, nil},
+		"apply bad parallel":    {[]string{"apply", "-j", "0", "dsk", "rpi"}, command.ExitNG, nil},
+	}
+
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			var stdout, stderr bytes.Buffer
+			args := append([]string{"a", "-C", root}, tt.args...)
+			exit := command.Main(&stdout, &stderr, strings.NewReader(""), args)
+			if exit != tt.exit {
+				t.Fatalf("want exit %d, got %d: %s %s", tt.exit, exit, stdout.String(), stderr.String())
+			}
+			for _, s := range tt.stdout {
+				if !strings.Contains(stdout.String(), s) {
+					t.Errorf("stdout does not contain %q:\n%s", s, stdout.String())
+				}
 			}
 		})
 	}
