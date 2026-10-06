@@ -1,0 +1,18 @@
+---
+mitamae:
+  version: 2.0.3
+  checksums:
+    x86_64: 0000
+nodes:
+- nodes/all/*.json
+- nodes/all/*.yml
+- nodes/domains/{domain}/*.yml
+- nodes/domains/{domain}/inventory/*.yml
+- nodes/hosts/{hostname}/*.yml
+- nodes/hosts/{hostname}/inventory/*.yml
+- nodes/fqdns/{domain}/{hostname}/*.yml
+prelude:
+- helpers/keeper.rb
+remote:
+  exclude:
+  - /.git/

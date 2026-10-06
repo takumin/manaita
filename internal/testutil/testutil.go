@@ -2,6 +2,7 @@
 package testutil
 
 import (
+	_ "embed"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,24 +23,9 @@ func WriteFiles(t *testing.T, root string, files map[string]string) {
 }
 
 // Manifest is a manifest exercising every node layer.
-const Manifest = `mitamae:
-  version: 2.0.3
-  checksums:
-    x86_64: 0000
-nodes:
-  - nodes/all/*.json
-  - nodes/all/*.yml
-  - nodes/domains/{domain}/*.yml
-  - nodes/domains/{domain}/inventory/*.yml
-  - nodes/hosts/{hostname}/*.yml
-  - nodes/hosts/{hostname}/inventory/*.yml
-  - nodes/fqdns/{domain}/{hostname}/*.yml
-prelude:
-  - helpers/keeper.rb
-remote:
-  exclude:
-    - /.git/
-`
+//
+//go:embed testdata/manaita.yml
+var Manifest string
 
 // Project creates a project fixture and returns its root.
 func Project(t *testing.T) string {
