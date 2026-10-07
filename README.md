@@ -124,6 +124,7 @@ run_list:
 `manaita plan` takes the same arguments and flags as `apply`, and runs mitamae with `--dry-run`.
 Without a name, `show`, `plan` and `apply` identify this machine by its hostname and domain, and apply runs mitamae from the project in place.
 Applying to this machine needs a terminal, so that a host list expanded to nothing in a script fails instead.
+On this machine, sudo preserves the proxy variables set in the environment (`http_proxy`, `https_proxy`, `ftp_proxy`, `all_proxy`, `no_proxy` and their uppercase forms) for mitamae; on a remote host, mitamae sees the environment of that host.
 A node file matched by several patterns, directly or through a symlink, is passed only once.
 The binaries are downloaded from the mitamae releases into the user cache directory and verified against their checksums.
 The remote user must be able to run `sudo`; with a single host and a terminal, sudo can prompt for a password.

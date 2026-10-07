@@ -296,6 +296,9 @@ func TestLocalCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"/bin/mitamae", "local", "--dry-run", "--node-json=nodes/all/c.json", "--node-yaml=nodes/all/a.yml", "--node-yaml=nodes/all/b.yml", "--node-yaml=nodes/hosts/dsk/h.yml", "helpers/keeper.rb", "cookbooks/common/sudo/default.rb"}
+	for _, name := range []string{"http_proxy", "https_proxy", "ftp_proxy", "all_proxy", "no_proxy", "HTTP_PROXY", "HTTPS_PROXY", "FTP_PROXY", "ALL_PROXY", "NO_PROXY"} {
+		t.Setenv(name, "")
+	}
 	if os.Geteuid() != 0 {
 		want = append([]string{"sudo"}, want...)
 	}

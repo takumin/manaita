@@ -124,13 +124,35 @@ func (d *Deployer) Local(ctx context.Context) error {
 
 // LocalCommand returns the command line applying plan on this machine with
 // the mitamae binary bin, run from the project root. sudo is prepended unless
-// running as root.
+// running as root, preserving the proxy variables set in the environment.
 func (d *Deployer) LocalCommand(bin string, plan *Plan) []string {
 	args := append([]string{bin}, mitamae.LocalArgs(plan.Nodes, plan.Recipes, d.Options)...)
 	if os.Geteuid() != 0 {
-		args = append([]string{"sudo"}, args...)
+		args = append(sudoArgs(), args...)
 	}
 	return args
+}
+
+// proxyVars are the proxy variables sudo preserves for mitamae.
+var proxyVars = []string{
+	"http_proxy", "https_proxy", "ftp_proxy", "all_proxy", "no_proxy",
+	"HTTP_PROXY", "HTTPS_PROXY", "FTP_PROXY", "ALL_PROXY", "NO_PROXY",
+}
+
+// sudoArgs returns the sudo command line preserving the proxy variables set
+// in the environment. Only the set ones are listed, since sudoers may refuse
+// to preserve variables.
+func sudoArgs() []string {
+	var names []string
+	for _, name := range proxyVars {
+		if os.Getenv(name) != "" {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return []string{"sudo"}
+	}
+	return []string{"sudo", "--preserve-env=" + strings.Join(names, ",")}
 }
 
 // Remote copies the project to the ssh destination dest and applies there the
