@@ -62,11 +62,6 @@ func Flags(cfg *config.Config) []cli.Flag {
 func Action(cfg *config.Config, dryRun bool) cli.ActionFunc {
 	return func(ctx context.Context, cmd *cli.Command) error {
 		dests := cmd.Args().Slice()
-		// Without a host, this machine is applied. A terminal is required so
-		// that a host list expanded to nothing in a script fails instead.
-		if len(dests) == 0 && !isTerminal(cmd.Reader) {
-			return fmt.Errorf("no host given: %s on this machine requires a terminal", cmd.Name)
-		}
 		if cfg.Parallel < 1 {
 			return fmt.Errorf("invalid --parallel: %d", cfg.Parallel)
 		}
@@ -81,13 +76,9 @@ func Action(cfg *config.Config, dryRun bool) cli.ActionFunc {
 			return err
 		}
 
-		fetcher, err := mitamae.NewFetcher(p.Mitamae)
-		if err != nil {
-			return err
-		}
 		d := &deploy.Deployer{
 			Project: p,
-			Fetcher: fetcher,
+			Fetcher: mitamae.NewFetcher(p.Mitamae),
 			Options: mitamae.Options{
 				DryRun:   dryRun,
 				LogLevel: cfg.MitamaeLogLevel,

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -51,11 +52,34 @@ func LocalArch() (string, error) {
 	}
 }
 
+// CacheDirEnv is the environment variable setting the cache directory.
+const CacheDirEnv = "MANAITA_CACHE_DIR"
+
+// SystemCacheDir is the cache directory when neither CacheDirEnv nor the user
+// cache directory is set, as when run by cloud-init without HOME.
+const SystemCacheDir = "/var/lib/cache/manaita"
+
+// CacheDir returns the cache directory of manaita: CacheDirEnv when set,
+// else manaita under the user cache directory, else SystemCacheDir.
+func CacheDir() string {
+	if dir := os.Getenv(CacheDirEnv); dir != "" {
+		return dir
+	}
+	if dir, err := os.UserCacheDir(); err == nil {
+		return filepath.Join(dir, "manaita")
+	}
+	return SystemCacheDir
+}
+
 // Fetcher downloads the release binaries into a cache directory.
 type Fetcher struct {
 	Version   string
 	Checksums map[string]string
 	CacheDir  string
+	// Command is the name of the installed binary looked up in PATH, used
+	// instead of downloading when it matches the checksum. Empty disables
+	// the lookup.
+	Command string
 	// BaseURL is the release download URL, without the version.
 	BaseURL string
 	Client  *http.Client
@@ -64,20 +88,18 @@ type Fetcher struct {
 	mu sync.Mutex
 }
 
-// NewFetcher returns a Fetcher of the mitamae release pinned by m, caching
-// the binaries under the user cache directory.
-func NewFetcher(m project.Mitamae) (*Fetcher, error) {
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		return nil, fmt.Errorf("failed to find the cache directory: %w", err)
-	}
+// NewFetcher returns a Fetcher of the mitamae release pinned by m, using the
+// mitamae installed in PATH when it matches, and caching the binaries under
+// CacheDir otherwise.
+func NewFetcher(m project.Mitamae) *Fetcher {
 	return &Fetcher{
 		Version:   m.Version,
 		Checksums: m.Checksums,
-		CacheDir:  filepath.Join(cache, "manaita", "mitamae"),
+		CacheDir:  filepath.Join(CacheDir(), "mitamae"),
+		Command:   "mitamae",
 		BaseURL:   "https://github.com/itamae-kitchen/mitamae/releases/download",
 		Client:    http.DefaultClient,
-	}, nil
+	}
 }
 
 // Fetch returns the path of the binary for arch, downloading it when it is
@@ -86,11 +108,13 @@ func (f *Fetcher) Fetch(ctx context.Context, arch string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	want, ok := f.Checksums[arch]
-	if !ok || want == "" {
-		return "", fmt.Errorf("no checksum pinned for mitamae %s %s", f.Version, arch)
+	want, err := f.checksum(arch)
+	if err != nil {
+		return "", err
 	}
-	want = strings.ToLower(strings.TrimPrefix(want, "sha256:"))
+	if path, ok := f.installed(want); ok {
+		return path, nil
+	}
 	asset := fmt.Sprintf("mitamae-%s-linux", arch)
 	path := f.Path(arch)
 
@@ -140,6 +164,46 @@ func (f *Fetcher) Fetch(ctx context.Context, arch string) (string, error) {
 	return path, nil
 }
 
+// Lookup returns the path of the binary Fetch would return for arch, without
+// downloading: the installed binary when it matches, else the cached one,
+// whether it is downloaded or not.
+func (f *Fetcher) Lookup(arch string) string {
+	if want, err := f.checksum(arch); err == nil {
+		if path, ok := f.installed(want); ok {
+			return path
+		}
+	}
+	return f.Path(arch)
+}
+
+// checksum returns the SHA-256 pinned for arch, in lowercase hex.
+func (f *Fetcher) checksum(arch string) (string, error) {
+	want, ok := f.Checksums[arch]
+	if !ok || want == "" {
+		return "", fmt.Errorf("no checksum pinned for mitamae %s %s", f.Version, arch)
+	}
+	return strings.ToLower(strings.TrimPrefix(want, "sha256:")), nil
+}
+
+// installed returns the path of the binary found in PATH, when it matches
+// the checksum want.
+func (f *Fetcher) installed(want string) (string, bool) {
+	if f.Command == "" {
+		return "", false
+	}
+	path, err := exec.LookPath(f.Command)
+	if err != nil {
+		return "", false
+	}
+	if path, err = filepath.Abs(path); err != nil {
+		return "", false
+	}
+	if got, err := fileSHA256(path); err != nil || got != want {
+		return "", false
+	}
+	return path, true
+}
+
 // Path returns the path of the cached binary for arch, whether it is
 // downloaded or not.
 func (f *Fetcher) Path(arch string) string {
@@ -147,7 +211,7 @@ func (f *Fetcher) Path(arch string) string {
 }
 
 func fileSHA256(path string) (string, error) {
-	f, err := os.Open(path) // #nosec G304 -- the path is in the cache directory
+	f, err := os.Open(path) // #nosec G304 -- the path is in the cache directory or PATH
 	if err != nil {
 		return "", err
 	}

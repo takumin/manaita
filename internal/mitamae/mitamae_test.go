@@ -41,13 +41,89 @@ func TestLocalArch(t *testing.T) {
 	}
 }
 
+func TestCacheDir(t *testing.T) {
+	cases := map[string]struct {
+		env  map[string]string
+		want string
+	}{
+		"env":         {map[string]string{mitamae.CacheDirEnv: "/srv/cache", "XDG_CACHE_HOME": "/xdg", "HOME": "/home/u"}, "/srv/cache"},
+		"xdg":         {map[string]string{mitamae.CacheDirEnv: "", "XDG_CACHE_HOME": "/xdg", "HOME": "/home/u"}, "/xdg/manaita"},
+		"home":        {map[string]string{mitamae.CacheDirEnv: "", "XDG_CACHE_HOME": "", "HOME": "/home/u"}, "/home/u/.cache/manaita"},
+		"env no home": {map[string]string{mitamae.CacheDirEnv: "/srv/cache", "XDG_CACHE_HOME": "", "HOME": ""}, "/srv/cache"},
+		"system":      {map[string]string{mitamae.CacheDirEnv: "", "XDG_CACHE_HOME": "", "HOME": ""}, mitamae.SystemCacheDir},
+	}
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+			if got := mitamae.CacheDir(); got != tt.want {
+				t.Errorf("want %s, got %s", tt.want, got)
+			}
+		})
+	}
+}
+
 func TestNewFetcher(t *testing.T) {
-	f, err := mitamae.NewFetcher(project.Mitamae{Version: "2.0.3"})
-	if err != nil {
+	t.Setenv(mitamae.CacheDirEnv, "/srv/cache")
+	f := mitamae.NewFetcher(project.Mitamae{Version: "2.0.3"})
+	if f.Version != "2.0.3" || f.BaseURL == "" || f.Client == nil || f.CacheDir != "/srv/cache/mitamae" || f.Command != "mitamae" {
+		t.Errorf("unexpected fetcher: %+v", f)
+	}
+}
+
+func TestFetchInstalled(t *testing.T) {
+	body := []byte("#!/bin/sh\n")
+	sum := sha256.Sum256(body)
+	bin := t.TempDir()
+	installed := filepath.Join(bin, "mitamae")
+	if err := os.WriteFile(installed, body, 0o755); err != nil { // #nosec G306 -- the binary is executed
 		t.Fatal(err)
 	}
-	if f.Version != "2.0.3" || f.BaseURL == "" || f.Client == nil || f.CacheDir == "" {
-		t.Errorf("unexpected fetcher: %+v", f)
+	t.Setenv("PATH", bin)
+
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Write([]byte("downloaded")) //nolint:errcheck,gosec
+	}))
+	defer srv.Close()
+	downloaded := sha256.Sum256([]byte("downloaded"))
+
+	f := &mitamae.Fetcher{
+		Version: "2.0.3",
+		Checksums: map[string]string{
+			"x86_64":  hex.EncodeToString(sum[:]),
+			"aarch64": hex.EncodeToString(downloaded[:]),
+		},
+		CacheDir: t.TempDir(),
+		Command:  "mitamae",
+		BaseURL:  srv.URL,
+		Client:   srv.Client(),
+	}
+	ctx := context.Background()
+
+	if got := f.Lookup("x86_64"); got != installed {
+		t.Errorf("want the installed binary %s, got %s", installed, got)
+	}
+	if got, err := f.Fetch(ctx, "x86_64"); err != nil || got != installed || requests.Load() != 0 {
+		t.Errorf("want the installed binary %s without a request, got %s after %d requests (%v)", installed, got, requests.Load(), err)
+	}
+
+	// The installed binary does not match the checksum of aarch64.
+	if got := f.Lookup("aarch64"); got != f.Path("aarch64") {
+		t.Errorf("want the cached binary, got %s", got)
+	}
+	if got, err := f.Fetch(ctx, "aarch64"); err != nil || got != f.Path("aarch64") || requests.Load() != 1 {
+		t.Errorf("want the downloaded binary, got %s after %d requests (%v)", got, requests.Load(), err)
+	}
+	if got := f.Lookup("i386"); got != f.Path("i386") {
+		t.Errorf("want the cached binary without a checksum, got %s", got)
+	}
+
+	f.Command = "missing"
+	if got := f.Lookup("x86_64"); got != f.Path("x86_64") {
+		t.Errorf("want the cached binary without an installed one, got %s", got)
 	}
 }
 
