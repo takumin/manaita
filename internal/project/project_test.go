@@ -41,6 +41,7 @@ func TestLoadErrors(t *testing.T) {
 		"unknown field": "mitamae:\n  version: 1\nunknown: 1\n",
 		"absolute path": "mitamae:\n  version: 1\nremote:\n  path: /srv\n",
 		"invalid yaml":  "mitamae: [\n",
+		"two layers":    "mitamae:\n  version: 1\nhosts: nodes/{layer}/{layer}\n",
 	}
 	for name, manifest := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -100,6 +101,51 @@ func TestHosts(t *testing.T) {
 	}
 	if !reflect.DeepEqual(hosts, want) {
 		t.Errorf("want %+v, got %+v", want, hosts)
+	}
+}
+
+func TestHostsLayerPlaceholder(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFiles(t, root, map[string]string{
+		project.FileName:                                  "mitamae:\n  version: 1\nhosts: nodes/{layer}/recipes\n",
+		"nodes/all/recipes/common.yml":                    "run_list:\n  - helpers/keeper.rb\n",
+		"nodes/all/config/a.yml":                          "",
+		"nodes/domains/example.internal/recipes/d.yml":    "run_list:\n  - cookbooks/common/sudo\n",
+		"nodes/hosts/dsk/recipes/host.yml":                "",
+		"nodes/hosts/dsk/config/h.yml":                    "",
+		"nodes/hosts/config/recipes/host.yml":             "",
+		"nodes/hosts/.hidden/recipes/host.yml":            "",
+		"nodes/hosts/noconfig/config/h.yml":               "",
+		"nodes/fqdns/example.internal/rpi4/recipes/r.yml": "run_list:\n  - cookbooks/server/dnsmasq\n",
+		"nodes/old.yml":                                   "",
+	})
+	p, err := project.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hosts, err := p.Hosts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []*project.Host{
+		{Name: "config", RunList: []string{"helpers/keeper.rb"}, Files: []string{"nodes/all/recipes/common.yml", "nodes/hosts/config/recipes/host.yml"}},
+		{Name: "dsk", RunList: []string{"helpers/keeper.rb"}, Files: []string{"nodes/all/recipes/common.yml", "nodes/hosts/dsk/recipes/host.yml"}},
+		{
+			Name:    "rpi4",
+			Domain:  "example.internal",
+			RunList: []string{"helpers/keeper.rb", "cookbooks/common/sudo", "cookbooks/server/dnsmasq"},
+			Files: []string{
+				"nodes/all/recipes/common.yml",
+				"nodes/domains/example.internal/recipes/d.yml",
+				"nodes/fqdns/example.internal/rpi4/recipes/r.yml",
+			},
+		},
+	}
+	if !reflect.DeepEqual(hosts, want) {
+		t.Errorf("want %+v, got %+v", want, hosts)
+	}
+	if _, err := p.Host("noconfig", ""); err == nil {
+		t.Error("expected a host without recipes not to be declared")
 	}
 }
 

@@ -20,9 +20,11 @@ import (
 //	hosts/{hostname}/*.yml
 //	fqdns/{domain}/{hostname}/*.yml
 //
-// The files of a layer are merged in the order of their names. A host is
-// declared by a directory of hosts or fqdns holding at least one file, so a
-// hostname may have a different inventory in each domain.
+// The layers are directories of the hosts directory, or the directories it
+// names with {layer} replaced by their path, like nodes/{layer}/recipes. The
+// files of a layer are merged in the order of their names. A host is declared
+// by a layer of hosts or fqdns holding at least one file, so a hostname may
+// have a different inventory in each domain.
 type Host struct {
 	// Name is the short hostname.
 	Name string
@@ -43,23 +45,28 @@ type hostFile struct {
 
 // Hosts returns every host of the inventory, sorted by name.
 func (p *Project) Hosts() ([]*Host, error) {
-	dir := filepath.Join(p.Root, p.HostsDir)
-	if files, err := layerFiles(dir); err != nil {
-		return nil, err
-	} else if len(files) > 0 {
-		// Catch the host files of the flat inventory, which are not layers.
-		return nil, fmt.Errorf("unexpected inventory file %s: move it to a layer directory", filepath.Join(p.HostsDir, files[0]))
+	if !strings.Contains(p.HostsDir, LayerPlaceholder) {
+		if files, err := layerFiles(filepath.Join(p.Root, p.HostsDir)); err != nil {
+			return nil, err
+		} else if len(files) > 0 {
+			// Catch the host files of the flat inventory, which are not layers.
+			return nil, fmt.Errorf("unexpected inventory file %s: move it to a layer directory", filepath.Join(p.HostsDir, files[0]))
+		}
 	}
+	prefix, suffix := p.layerAffixes()
 	hosts := []*Host{}
 	for _, pattern := range []string{"hosts/*", "fqdns/*/*"} {
-		matches, err := filepath.Glob(filepath.Join(dir, pattern))
+		matches, err := filepath.Glob(filepath.Join(p.Root, p.layerDir(pattern)))
 		if err != nil {
 			return nil, err
 		}
 		for _, m := range matches {
-			name, domain := filepath.Base(m), ""
+			// The layer path sits between the parts of the hosts directory.
+			layer := strings.TrimSuffix(strings.TrimPrefix(m, prefix), suffix)
+			parts := strings.Split(filepath.ToSlash(layer), "/")
+			name, domain := parts[len(parts)-1], ""
 			if pattern != "hosts/*" {
-				domain = filepath.Base(filepath.Dir(m))
+				domain = parts[len(parts)-2]
 			}
 			if hidden(name) || hidden(domain) {
 				continue
@@ -123,7 +130,7 @@ func (p *Project) Host(name, domain string) (*Host, error) {
 	h := &Host{Name: name, Domain: domain, RunList: []string{}, Files: []string{}}
 	declared := false
 	for _, l := range layers {
-		rel := filepath.Join(p.HostsDir, l.path)
+		rel := p.layerDir(l.path)
 		files, err := layerFiles(filepath.Join(p.Root, rel))
 		if err != nil {
 			return nil, err
@@ -146,6 +153,29 @@ func (p *Project) Host(name, domain string) (*Host, error) {
 		return nil, fmt.Errorf("host %s not found in %s", h.FQDN(), p.HostsDir)
 	}
 	return h, nil
+}
+
+// layerDir returns the directory of the layer path, relative to the project
+// root.
+func (p *Project) layerDir(path string) string {
+	if strings.Contains(p.HostsDir, LayerPlaceholder) {
+		return filepath.Clean(strings.Replace(p.HostsDir, LayerPlaceholder, path, 1))
+	}
+	return filepath.Join(p.HostsDir, path)
+}
+
+// layerAffixes returns the absolute directory before the path of a layer and
+// the part of the hosts directory after it.
+func (p *Project) layerAffixes() (string, string) {
+	before, after, found := strings.Cut(filepath.FromSlash(p.HostsDir), LayerPlaceholder)
+	if !found {
+		before, after = p.HostsDir, ""
+	}
+	prefix := filepath.Join(p.Root, before) + string(filepath.Separator)
+	if after = filepath.Clean(after); after == "." || after == string(filepath.Separator) {
+		after = ""
+	}
+	return prefix, after
 }
 
 // layerFiles returns the names of the YAML files of the layer directory dir,

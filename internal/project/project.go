@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -16,13 +17,18 @@ import (
 // FileName is the name of the manifest that marks the root of a project.
 const FileName = "manaita.yml"
 
+// LayerPlaceholder is replaced by the path of a layer in the hosts directory.
+const LayerPlaceholder = "{layer}"
+
 // Project is a mitamae repository described by its manifest.
 type Project struct {
 	// Root is the absolute path of the directory containing the manifest.
 	Root string `yaml:"-"`
 
 	Mitamae Mitamae `yaml:"mitamae"`
-	// HostsDir is the directory of the host inventory, one YAML file per host.
+	// HostsDir is the directory of the host inventory. {layer} is replaced by
+	// the path of each layer, which is appended to it when it has none, so
+	// that the run lists can live next to the node files of the same layer.
 	HostsDir string `yaml:"hosts"`
 	// Nodes are the glob patterns of the node attribute files, from the least
 	// to the most specific. {hostname} and {domain} are replaced by the values
@@ -89,6 +95,9 @@ func Load(root string) (*Project, error) {
 	}
 	if p.Mitamae.Version == "" {
 		return nil, fmt.Errorf("%s: mitamae.version is required", FileName)
+	}
+	if strings.Count(p.HostsDir, LayerPlaceholder) > 1 {
+		return nil, fmt.Errorf("%s: hosts must hold %s at most once", FileName, LayerPlaceholder)
 	}
 	if filepath.IsAbs(p.Remote.Path) {
 		return nil, fmt.Errorf("%s: remote.path must be relative to the home directory", FileName)
