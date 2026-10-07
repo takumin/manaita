@@ -21,7 +21,7 @@ The node attribute files are passed to mitamae as they are, so they merge exactl
 Download the binary for your platform from the [releases](https://github.com/takumin/manaita/releases) and verify it:
 
 ```sh
-VERSION=v0.1.0
+VERSION=v0.2.0
 BIN="manaita_${VERSION}_linux_amd64"
 BASE="https://github.com/takumin/manaita/releases/download/${VERSION}"
 curl -fsSLO "${BASE}/${BIN}" -O "${BASE}/${BIN}.sig" -O "${BASE}/${BIN}.cert" -O "${BASE}/SHA256SUMS"
