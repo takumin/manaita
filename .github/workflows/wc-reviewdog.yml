@@ -37,7 +37,7 @@ jobs:
     needs: matrix
     name: Reviewdog (${{ matrix.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrix.outputs.targets) }}
@@ -64,7 +64,24 @@ jobs:
           go-mod-
         path: ~/go/pkg/mod/
     - name: Running reviewdog
-      run: task "${REVIEWDOG_TARGET}"
+      # The github-check reporter now and then gets a 404 when it updates the
+      # check run it has just created ("failed to post result: PATCH
+      # .../check-runs/<id>: 404 Not Found"), although the lint itself passed.
+      # Only that failure is retried; lint findings and any other error fail
+      # the job on the first attempt.
+      run: |-
+        log="${RUNNER_TEMP}/reviewdog.log"
+        for attempt in 1 2 3; do
+          if task "${REVIEWDOG_TARGET}" 2>&1 | tee "${log}"; then
+            exit 0
+          fi
+          if ! grep -q 'reviewdog: failed to post result' "${log}"; then
+            exit 1
+          fi
+          echo "::warning::reviewdog failed to post the result (attempt ${attempt}/3)"
+          sleep $((attempt * 10))
+        done
+        exit 1
       env:
         REVIEWDOG_TARGET: ${{ matrix.target }}
         # A pull_request raised from a fork gets a read-only GITHUB_TOKEN
