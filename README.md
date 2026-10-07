@@ -134,8 +134,11 @@ run_list:
 `manaita show` takes such a name, without connecting, and lists the inventory files merged into the host.
 `manaita plan` takes the same arguments and flags as `apply`, and runs mitamae with `--dry-run`.
 Without a name, `show`, `plan` and `apply` identify this machine by its hostname and domain, and apply runs mitamae from the project in place.
-Applying to this machine needs a terminal, so that a host list expanded to nothing in a script fails instead.
+Applying to this machine needs no terminal, so it can run unattended from cloud-init or a systemd unit once the hostname is set.
 On this machine, sudo preserves the proxy variables set in the environment (`http_proxy`, `https_proxy`, `ftp_proxy`, `all_proxy`, `no_proxy` and their uppercase forms) for mitamae; on a remote host, mitamae sees the environment of that host.
 A node file matched by several patterns, directly or through a symlink, is passed only once.
-The binaries are downloaded from the mitamae releases into the user cache directory and verified against their checksums.
+A `mitamae` found in `PATH` is used when it matches the checksum of the arch, so an image with mitamae installed applies without the network.
+Otherwise the binaries are downloaded from the mitamae releases into the cache directory and verified against their checksums.
+The cache directory is `$MANAITA_CACHE_DIR` when set, else `manaita` under the user cache directory (`$XDG_CACHE_HOME` or `~/.cache`),
+else `/var/lib/cache/manaita` when neither `HOME` nor `XDG_CACHE_HOME` is set.
 The remote user must be able to run `sudo`; with a single host and a terminal, sudo can prompt for a password.

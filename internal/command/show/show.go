@@ -62,10 +62,7 @@ func action(cfg *config.Config) func(ctx context.Context, cmd *cli.Command) erro
 // showLocal prints the plan of this machine, with the command run from the
 // project root.
 func showLocal(ctx context.Context, cmd *cli.Command, cfg *config.Config, p *project.Project) error {
-	fetcher, err := mitamae.NewFetcher(p.Mitamae)
-	if err != nil {
-		return err
-	}
+	fetcher := mitamae.NewFetcher(p.Mitamae)
 	d := &deploy.Deployer{
 		Project: p,
 		Fetcher: fetcher,
@@ -76,7 +73,7 @@ func showLocal(ctx context.Context, cmd *cli.Command, cfg *config.Config, p *pro
 	if err != nil {
 		return err
 	}
-	return print(cmd.Writer, p, plan, deploy.ShellCommand(p.Root, d.LocalCommand(fetcher.Path(arch), plan)))
+	return print(cmd.Writer, p, plan, deploy.ShellCommand(p.Root, d.LocalCommand(fetcher.Lookup(arch), plan)))
 }
 
 func print(w io.Writer, p *project.Project, plan *deploy.Plan, command string) error {
