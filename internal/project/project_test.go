@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -42,6 +43,17 @@ func TestLoadErrors(t *testing.T) {
 		"absolute path": "mitamae:\n  version: 1\nremote:\n  path: /srv\n",
 		"invalid yaml":  "mitamae: [\n",
 		"two layers":    "mitamae:\n  version: 1\nhosts: nodes/{layer}/{layer}\n",
+		"plugin host":   plugins("gitlab.com/o/itamae-plugin-recipe-a", rev),
+		"plugin path":   plugins("github.com/o/x/itamae-plugin-recipe-a", rev),
+		"plugin dot":    plugins("github.com/o/..", rev),
+		"plugin owner":  plugins("github.com/../itamae-plugin-recipe-a", rev),
+		"plugin name":   plugins("github.com/o/apt", rev),
+		"plugin kind":   plugins("github.com/o/itamae-plugin-other-a", rev),
+		"plugin branch": plugins("github.com/o/itamae-plugin-recipe-a", "main"),
+		"plugin short":  plugins("github.com/o/itamae-plugin-recipe-a", rev[:7]),
+		"plugin upper":  plugins("github.com/o/itamae-plugin-recipe-a", strings.ToUpper(rev)),
+		"plugin twice": plugins("github.com/o/itamae-plugin-recipe-a", rev) +
+			"  - repo: github.com/p/itamae-plugin-recipe-a\n    rev: " + rev + "\n",
 	}
 	for name, manifest := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -51,6 +63,28 @@ func TestLoadErrors(t *testing.T) {
 				t.Error("expected an error")
 			}
 		})
+	}
+}
+
+const rev = "0123456789abcdef0123456789abcdef01234567"
+
+// plugins returns a manifest declaring the plugin repo at rev.
+func plugins(repo, rev string) string {
+	return "mitamae:\n  version: 1\nplugins:\n  - repo: " + repo + "\n    rev: " + rev + "\n"
+}
+
+func TestLoadPlugins(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFiles(t, root, map[string]string{
+		project.FileName: plugins("github.com/o/itamae-plugin-recipe-a", rev) +
+			"  - repo: github.com/o/mitamae-plugin-resource-b.c\n    rev: " + rev + "\n",
+	})
+	p, err := project.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Plugins) != 2 || p.Plugins[0].Name() != "itamae-plugin-recipe-a" || p.Plugins[1].String() != "github.com/o/mitamae-plugin-resource-b.c@"+rev {
+		t.Errorf("unexpected plugins: %+v", p.Plugins)
 	}
 }
 
@@ -320,7 +354,7 @@ func TestResolveRecipe(t *testing.T) {
 	}
 	for name, want := range cases {
 		got, err := p.ResolveRecipe(name)
-		if err != nil || got != want {
+		if err != nil || got != (project.Recipe{Path: want}) {
 			t.Errorf("%s: want %s, got %s (%v)", name, want, got, err)
 		}
 	}
@@ -331,5 +365,66 @@ func TestResolveRecipe(t *testing.T) {
 	}
 	if _, err := p.ResolveRecipes([]string{"helpers/keeper.rb", "missing"}); err == nil {
 		t.Error("expected an error")
+	}
+}
+
+func TestResolvePluginRecipe(t *testing.T) {
+	root := testutil.Project(t)
+	testutil.WriteFiles(t, root, map[string]string{
+		project.FileName: testutil.Manifest + "plugins:\n- repo: github.com/o/itamae-plugin-recipe-apt\n  rev: " + rev + "\n",
+		"plugins/mitamae-plugin-recipe-local/README.md":  "",
+		"plugins/.itamae-plugin-recipe-hidden/README.md": "",
+		"plugins/itamae-plugin-recipe-file":              "",
+		"cookbooks/apt.rb":                               "",
+	})
+	p, err := project.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]project.Recipe{
+		"apt::source":           {Plugin: "apt::source"},
+		"apt::a::b":             {Plugin: "apt::a::b"},
+		"local":                 {Plugin: "local"},
+		"local::x-y_z":          {Plugin: "local::x-y_z"},
+		"cookbooks/apt":         {Path: "cookbooks/apt.rb"},
+		"cookbooks/common/sudo": {Path: "cookbooks/common/sudo/default.rb"},
+	}
+	for name, want := range cases {
+		got, err := p.ResolveRecipe(name)
+		if err != nil || got != want {
+			t.Errorf("%s: want %+v, got %+v (%v)", name, want, got, err)
+		}
+		if got.String() != name && got.Plugin != "" {
+			t.Errorf("%s: unexpected name %s", name, got)
+		}
+	}
+	for _, name := range []string{"missing", "hidden", "file", "apt::", "apt::a.rb", "apt:source", "resource"} {
+		if r, err := p.ResolveRecipe(name); err == nil {
+			t.Errorf("%s: expected an error, got %+v", name, r)
+		}
+	}
+
+	local, err := p.LocalPlugins()
+	if err != nil || len(local) != 1 || local[0] != "mitamae-plugin-recipe-local" {
+		t.Errorf("unexpected local plugins: %v (%v)", local, err)
+	}
+}
+
+func TestPluginRecipeFiles(t *testing.T) {
+	want := []string{
+		"mrblib/itamae/plugin/recipe/apt/default.rb",
+		"mrblib/itamae/plugin/recipe/apt.rb",
+		"mrblib/mitamae/plugin/recipe/apt/default.rb",
+		"mrblib/mitamae/plugin/recipe/apt.rb",
+	}
+	if got := project.PluginRecipeFiles("apt"); !slices.Equal(got, want) {
+		t.Errorf("want %v, got %v", want, got)
+	}
+	want = []string{"mrblib/itamae/plugin/recipe/apt/a/b.rb", "mrblib/mitamae/plugin/recipe/apt/a/b.rb"}
+	if got := project.PluginRecipeFiles("apt::a::b"); !slices.Equal(got, want) {
+		t.Errorf("want %v, got %v", want, got)
+	}
+	if got := project.PluginOf("apt::a::b"); got != "apt" {
+		t.Errorf("unexpected plugin: %s", got)
 	}
 }

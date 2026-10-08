@@ -15,6 +15,7 @@ import (
 
 	"github.com/takumin/manaita/internal/logging"
 	"github.com/takumin/manaita/internal/mitamae"
+	"github.com/takumin/manaita/internal/plugin"
 	"github.com/takumin/manaita/internal/project"
 )
 
@@ -30,7 +31,7 @@ const identify = "uname -m && hostname -s && { dnsdomainname 2>/dev/null || true
 type Plan struct {
 	Host    *project.Host
 	Nodes   []project.NodeFile
-	Recipes []string
+	Recipes []project.Recipe
 }
 
 // NewPlan returns the plan of h. recipes override the run list of the host
@@ -70,8 +71,14 @@ func (ExecRunner) Run(_ context.Context, cmd *exec.Cmd) error {
 type Deployer struct {
 	Project *project.Project
 	Fetcher *mitamae.Fetcher
-	Options mitamae.Options
-	Runner  Runner
+	// Plugins fetches the plugins of the project, verified against Lock.
+	Plugins *plugin.Store
+	Lock    plugin.Lock
+	// StageDir is the directory staging the plugins and the recipes including
+	// the plugin recipes on this machine. See LocalStageDir.
+	StageDir string
+	Options  mitamae.Options
+	Runner   Runner
 	// Recipes override the run list of the hosts when not empty.
 	Recipes []string
 
@@ -117,6 +124,17 @@ func (d *Deployer) Local(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if d.staged(plan) {
+		if d.StageDir == "" {
+			return fmt.Errorf("no stage directory for the plugins")
+		}
+		if err := os.RemoveAll(d.StageDir); err != nil {
+			return err
+		}
+		if err := d.stage(ctx, plan, d.StageDir); err != nil {
+			return err
+		}
+	}
 	cmd := d.command(ctx, d.Stdin, d.Stdout, d.LocalCommand(bin, plan)...)
 	cmd.Dir = d.Project.Root
 	return d.run(ctx, cmd)
@@ -126,7 +144,7 @@ func (d *Deployer) Local(ctx context.Context) error {
 // the mitamae binary bin, run from the project root. sudo is prepended unless
 // running as root, preserving the proxy variables set in the environment.
 func (d *Deployer) LocalCommand(bin string, plan *Plan) []string {
-	args := append([]string{bin}, mitamae.LocalArgs(plan.Nodes, plan.Recipes, d.Options)...)
+	args := append([]string{bin}, d.args(plan, d.StageDir)...)
 	if os.Geteuid() != 0 {
 		args = append(sudoArgs(), args...)
 	}
@@ -178,12 +196,30 @@ func (d *Deployer) Remote(ctx context.Context, dest string) error {
 	if err != nil {
 		return err
 	}
+	// The plugins are fetched before copying anything.
+	stage := ""
+	if d.staged(plan) {
+		if stage, err = os.MkdirTemp("", "manaita-stage-*"); err != nil {
+			return err
+		}
+		defer os.RemoveAll(stage) //nolint:errcheck
+		if err := d.stage(ctx, plan, stage); err != nil {
+			return err
+		}
+	}
 
 	if err := d.run(ctx, d.command(ctx, nil, d.Stdout, d.RsyncArgs(dest)...)); err != nil {
 		return fmt.Errorf("failed to copy the project to %s: %w", dest, err)
 	}
 	if err := d.run(ctx, d.command(ctx, nil, d.Stdout, "rsync", "-a", bin, dest+":"+path.Join(state, "mitamae"))); err != nil {
 		return fmt.Errorf("failed to copy mitamae to %s: %w", dest, err)
+	}
+	if stage != "" {
+		// The symlinks to the plugins are copied as the plugins, keeping
+		// mitamae, which is not staged.
+		if err := d.run(ctx, d.command(ctx, nil, d.Stdout, "rsync", "-aL", "--delete", "--exclude=/mitamae", stage+"/", dest+":"+state+"/")); err != nil {
+			return fmt.Errorf("failed to copy the plugins to %s: %w", dest, err)
+		}
 	}
 
 	ssh := []string{"ssh"}
@@ -230,7 +266,7 @@ func (d *Deployer) RsyncArgs(dest string) []string {
 
 // RemoteCommand returns the shell command applying plan on the remote host.
 func (d *Deployer) RemoteCommand(plan *Plan) string {
-	args := append([]string{"sudo", "./" + path.Join(stateDir, "mitamae")}, mitamae.LocalArgs(plan.Nodes, plan.Recipes, d.Options)...)
+	args := append([]string{"sudo", "./" + path.Join(stateDir, "mitamae")}, d.args(plan, stateDir)...)
 	return ShellCommand(d.Project.Remote.Path, args)
 }
 

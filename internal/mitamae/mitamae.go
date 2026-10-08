@@ -197,6 +197,9 @@ type Options struct {
 	DryRun   bool
 	LogLevel string
 	NoColor  bool
+	// Plugins is the plugin directory, ./plugins of the working directory
+	// when empty.
+	Plugins string
 }
 
 // LocalArgs returns the arguments of `mitamae local` applying recipes with
@@ -211,6 +214,9 @@ func LocalArgs(nodes []project.NodeFile, recipes []string, opts Options) []strin
 	}
 	if opts.NoColor {
 		args = append(args, "--no-color")
+	}
+	if opts.Plugins != "" {
+		args = append(args, "--plugins="+opts.Plugins)
 	}
 	for _, n := range nodes {
 		switch n.Format {

@@ -36,6 +36,9 @@ type Project struct {
 	Nodes []string `yaml:"nodes"`
 	// Prelude are the recipes run before the run list of every host.
 	Prelude []string `yaml:"prelude"`
+	// Plugins are fetched and given to mitamae with the plugin directory of
+	// the project, verified against the hashes of the lock file.
+	Plugins []Plugin `yaml:"plugins"`
 	Remote  Remote   `yaml:"remote"`
 }
 
@@ -101,6 +104,9 @@ func Load(root string) (*Project, error) {
 	}
 	if filepath.IsAbs(p.Remote.Path) {
 		return nil, fmt.Errorf("%s: remote.path must be relative to the home directory", FileName)
+	}
+	if err := validatePlugins(p.Plugins); err != nil {
+		return nil, fmt.Errorf("%s: %w", FileName, err)
 	}
 	return p, nil
 }

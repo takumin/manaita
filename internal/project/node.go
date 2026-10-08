@@ -110,13 +110,34 @@ func nodeFormat(path string) (string, error) {
 	}
 }
 
-// ResolveRecipe returns the recipe file of name, relative to the project
-// root. name is a file, a file without the .rb extension, or a directory
-// containing default.rb.
-func (p *Project) ResolveRecipe(name string) (string, error) {
+// Recipe is a recipe of a run list: a file of the project or a recipe of a
+// plugin.
+type Recipe struct {
+	// Path is the file, relative to the project root, empty for a plugin
+	// recipe.
+	Path string
+	// Plugin is the name of the plugin recipe, like apt or apt::source, as
+	// given to include_recipe.
+	Plugin string
+}
+
+// String returns the file of the recipe, or the name of the plugin recipe.
+func (r Recipe) String() string {
+	if r.Plugin != "" {
+		return r.Plugin
+	}
+	return r.Path
+}
+
+// ResolveRecipe returns the recipe name. name is a file of the project, a
+// file without the .rb extension, or a directory containing default.rb. When
+// there is no such file, name is a recipe of a plugin, like apt or
+// apt::source, when its recipe plugin is declared by the manifest or in the
+// plugin directory of the project.
+func (p *Project) ResolveRecipe(name string) (Recipe, error) {
 	clean := filepath.Clean(filepath.FromSlash(name))
 	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("recipe %s is outside of the project", name)
+		return Recipe{}, fmt.Errorf("recipe %s is outside of the project", name)
 	}
 	for _, candidate := range []string{
 		clean,
@@ -125,15 +146,24 @@ func (p *Project) ResolveRecipe(name string) (string, error) {
 	} {
 		info, err := os.Stat(filepath.Join(p.Root, candidate))
 		if err == nil && info.Mode().IsRegular() {
-			return filepath.ToSlash(candidate), nil
+			return Recipe{Path: filepath.ToSlash(candidate)}, nil
 		}
 	}
-	return "", fmt.Errorf("recipe %s not found", name)
+	if pluginRecipe.MatchString(name) {
+		ok, err := p.recipePlugin(PluginOf(name))
+		if err != nil {
+			return Recipe{}, err
+		}
+		if ok {
+			return Recipe{Plugin: name}, nil
+		}
+	}
+	return Recipe{}, fmt.Errorf("recipe %s not found", name)
 }
 
 // ResolveRecipes resolves every recipe of names.
-func (p *Project) ResolveRecipes(names []string) ([]string, error) {
-	recipes := make([]string, 0, len(names))
+func (p *Project) ResolveRecipes(names []string) ([]Recipe, error) {
+	recipes := make([]Recipe, 0, len(names))
 	for _, name := range names {
 		r, err := p.ResolveRecipe(name)
 		if err != nil {

@@ -54,6 +54,7 @@ manaita apply dsk                         # apply the run list over ssh (any ssh
 manaita apply -L debug dsk                # mitamae debug log
 manaita apply -r cookbooks/server/nginx dsk  # apply a recipe instead of the run list
 manaita apply -j 4 rpi4-8g-{1..4}         # several hosts in parallel
+manaita lock                              # write the hashes of the plugins to manaita.lock
 ```
 
 `-C DIR` selects the project; by default it is found by walking up from the current directory.
@@ -81,6 +82,10 @@ nodes:
 
 prelude: # recipes run before every run list
   - helpers/keeper.rb
+
+plugins: # mitamae plugins, pinned to a commit (see Plugins)
+  - repo: github.com/takumin/itamae-plugin-recipe-apt
+    rev: 3f2a6c0e9b1d4a7f8e5c2b0a9d6f3e1c7b4a8d2e
 
 remote:
   path: mitamae # destination, relative to the home directory (default)
@@ -142,6 +147,32 @@ Otherwise the binaries are downloaded from the mitamae releases into the cache d
 The cache directory is `--cache-dir` when set, else `manaita` under the user cache directory (`$XDG_CACHE_HOME` or `~/.cache`),
 else `/var/lib/cache/manaita` when neither `HOME` nor `XDG_CACHE_HOME` is set.
 The remote user must be able to run `sudo`; with a single host and a terminal, sudo can prompt for a password.
+
+## Plugins
+
+`plugins` lists mitamae plugins by their GitHub repository and the full SHA of a commit, so that the recipes need not live in the project.
+The name of the repository must start with `itamae-plugin-recipe-` or `itamae-plugin-resource-` (or their `mitamae-` forms), as mitamae looks them up by it.
+A plugin depending on another is not resolved: list every plugin.
+
+The plugins are downloaded from `https://codeload.github.com/<owner>/<repo>/tar.gz/<rev>`, possibly through a [cache server](#cache-servers),
+extracted into `plugins/<repo>/<rev>` of the cache directory, and verified against their hashes in `manaita.lock`, next to `manaita.yml`.
+The hash is computed from the extracted files like the `h1:` hashes of `go.sum`, since the archives of GitHub may change for the same commit.
+An archive holding anything but directories, regular files and symlinks is refused, and the file modes are not part of the hash.
+A symlink must lead inside the plugin, without a loop; it is hashed, and copied to the remote hosts, as what it leads to.
+
+```
+github.com/takumin/itamae-plugin-recipe-apt 3f2a6c0e9b1d4a7f8e5c2b0a9d6f3e1c7b4a8d2e h1:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=
+```
+
+`manaita lock` downloads every plugin from its origin, never through the proxy list since the hashes are what the cache servers are checked against,
+and rewrites `manaita.lock` with their hashes.
+Run it after changing `plugins`: `apply` and `plan` refuse a plugin missing from `manaita.lock`.
+When a bot such as Renovate updates the commits, a CI job running `manaita lock` and pushing the result, like [autofix.ci](https://autofix.ci), keeps the lock file in step.
+
+A run list names a recipe of a plugin as `include_recipe` does: `apt` runs its `default.rb`, and `apt::source` its `source.rb`.
+A file of the project with the same name comes first.
+manaita gives mitamae a recipe including each of them, and, when `plugins` is not empty, a plugin directory holding the plugins of `plugins` and those of the `plugins` directory of the project, which must not share a name.
+For a remote host, the plugins are copied to `.manaita/plugins` of the remote project with `rsync`; on this machine, they are linked from `stage` of the cache directory.
 
 ## Configuration
 
