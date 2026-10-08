@@ -49,7 +49,6 @@ func Project(t *testing.T) string {
 		"hosts/hosts/rpi4/run_list.yml":                  "run_list:\n  - cookbooks/common/sudo\n",
 		"hosts/hosts/rpi4/z.yaml":                        "",
 		"hosts/hosts/empty/host.yml":                     "",
-		"hosts/hosts/empty/.hidden.yml":                  "run_lists: []\n",
 		"hosts/hosts/empty/README.md":                    "",
 		"hosts/hosts/.hidden/host.yml":                   "",
 		"hosts/hosts/nofiles/README.md":                  "",

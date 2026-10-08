@@ -22,7 +22,7 @@ func TestOpen(t *testing.T) {
 	if p.Root != root {
 		t.Errorf("root: want %s, got %s", root, p.Root)
 	}
-	if p.HostsDir != "hosts" || p.Remote.Path != "mitamae" {
+	if !slices.Equal(p.Inventory, project.DefaultHosts) || p.Remote.Path != "mitamae" {
 		t.Errorf("defaults not applied: %+v", p)
 	}
 	if p.Mitamae.Version != "2.0.3" || p.Mitamae.Checksums["x86_64"] != "0000" {
@@ -42,7 +42,7 @@ func TestLoadErrors(t *testing.T) {
 		"unknown field": "mitamae:\n  version: 1\nunknown: 1\n",
 		"absolute path": "mitamae:\n  version: 1\nremote:\n  path: /srv\n",
 		"invalid yaml":  "mitamae: [\n",
-		"two layers":    "mitamae:\n  version: 1\nhosts: nodes/{layer}/{layer}\n",
+		"hosts string":  "mitamae:\n  version: 1\nhosts: hosts\n",
 		"plugin host":   plugins("gitlab.com/o/itamae-plugin-recipe-a", rev),
 		"plugin path":   plugins("github.com/o/x/itamae-plugin-recipe-a", rev),
 		"plugin dot":    plugins("github.com/o/..", rev),
@@ -138,20 +138,29 @@ func TestHosts(t *testing.T) {
 	}
 }
 
-func TestHostsLayerPlaceholder(t *testing.T) {
+func TestHostsPatterns(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFiles(t, root, map[string]string{
-		project.FileName:                                  "mitamae:\n  version: 1\nhosts: nodes/{layer}/recipes\n",
-		"nodes/all/recipes/common.yml":                    "run_list:\n  - helpers/keeper.rb\n",
-		"nodes/all/config/a.yml":                          "",
-		"nodes/domains/example.internal/recipes/d.yml":    "run_list:\n  - cookbooks/common/sudo\n",
-		"nodes/hosts/dsk/recipes/host.yml":                "",
-		"nodes/hosts/dsk/config/h.yml":                    "",
-		"nodes/hosts/config/recipes/host.yml":             "",
-		"nodes/hosts/.hidden/recipes/host.yml":            "",
-		"nodes/hosts/noconfig/config/h.yml":               "",
-		"nodes/fqdns/example.internal/rpi4/recipes/r.yml": "run_list:\n  - cookbooks/server/dnsmasq\n",
-		"nodes/old.yml":                                   "",
+		project.FileName: "mitamae:\n  version: 1\nhosts:\n" +
+			"  - nodes/all/recipes/*.yml\n" +
+			"  - nodes/domains/{domain}/recipes/*.yml\n" +
+			"  - nodes/hosts/{hostname}/recipes/*.yml\n" +
+			"  - inventory/{hostname}.yml\n" +
+			"  - inventory/{hostname}.{domain}.yml\n" +
+			"  - inventory/{hostname}/{hostname}-[a-z]?.yml\n",
+		"nodes/all/recipes/common.yml":                 "run_list:\n  - helpers/keeper.rb\n",
+		"nodes/all/config/a.yml":                       "",
+		"nodes/domains/example.internal/recipes/d.yml": "run_list:\n  - cookbooks/common/sudo\n",
+		"nodes/hosts/dsk/recipes/host.yml":             "",
+		"nodes/hosts/dsk/config/h.yml":                 "",
+		"nodes/hosts/.hidden/recipes/host.yml":         "",
+		"nodes/hosts/noconfig/config/h.yml":            "",
+		"nodes/hosts/dir/recipes/dir.yml/x":            "",
+		"inventory/gw.yml":                             "",
+		"inventory/rpi4.example.internal.yml":          "run_list:\n  - cookbooks/server/dnsmasq\n",
+		"inventory/.hidden.example.internal.yml":       "",
+		"inventory/nas/nas-a1.yml":                     "",
+		"inventory/nas/other-a1.yml":                   "",
 	})
 	p, err := project.Open(root)
 	if err != nil {
@@ -162,8 +171,9 @@ func TestHostsLayerPlaceholder(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []*project.Host{
-		{Name: "config", RunList: []string{"helpers/keeper.rb"}, Files: []string{"nodes/all/recipes/common.yml", "nodes/hosts/config/recipes/host.yml"}},
 		{Name: "dsk", RunList: []string{"helpers/keeper.rb"}, Files: []string{"nodes/all/recipes/common.yml", "nodes/hosts/dsk/recipes/host.yml"}},
+		{Name: "gw", RunList: []string{"helpers/keeper.rb"}, Files: []string{"nodes/all/recipes/common.yml", "inventory/gw.yml"}},
+		{Name: "nas", RunList: []string{"helpers/keeper.rb"}, Files: []string{"nodes/all/recipes/common.yml", "inventory/nas/nas-a1.yml"}},
 		{
 			Name:    "rpi4",
 			Domain:  "example.internal",
@@ -171,15 +181,34 @@ func TestHostsLayerPlaceholder(t *testing.T) {
 			Files: []string{
 				"nodes/all/recipes/common.yml",
 				"nodes/domains/example.internal/recipes/d.yml",
-				"nodes/fqdns/example.internal/rpi4/recipes/r.yml",
+				"inventory/rpi4.example.internal.yml",
 			},
 		},
 	}
 	if !reflect.DeepEqual(hosts, want) {
 		t.Errorf("want %+v, got %+v", want, hosts)
 	}
-	if _, err := p.Host("noconfig", ""); err == nil {
-		t.Error("expected a host without recipes not to be declared")
+	for _, fqdn := range []string{"noconfig", "dir", "other"} {
+		if _, err := p.HostByFQDN(fqdn); err == nil {
+			t.Errorf("%s: expected the host not to be declared", fqdn)
+		}
+	}
+}
+
+func TestHostsErrors(t *testing.T) {
+	cases := map[string][]string{
+		"unknown placeholder": {"hosts/{hostname}/{fqdn}/*.yml"},
+		"bad pattern":         {"hosts/{hostname}/[/*.yml"},
+		"unknown in layer":    {"hosts/{fqdn}/*.yml", "hosts/hosts/{hostname}/*.yml"},
+	}
+	root := testutil.Project(t)
+	for name, inventory := range cases {
+		t.Run(name, func(t *testing.T) {
+			p := &project.Project{Root: root, Inventory: inventory}
+			if _, err := p.Hosts(); err == nil {
+				t.Error("expected an error")
+			}
+		})
 	}
 }
 
@@ -243,16 +272,11 @@ func TestHostInvalidFile(t *testing.T) {
 		"all":    "hosts/all/common.yml",
 		"domain": "hosts/domains/example.internal/common.yml",
 		"fqdn":   "hosts/fqdns/example.internal/rpi4/run_list.yml",
-		"flat":   "hosts/old.yml",
 	}
 	for name, file := range cases {
 		t.Run(name, func(t *testing.T) {
 			root := testutil.Project(t)
-			content := "run_lists: []\n"
-			if name == "flat" {
-				content = ""
-			}
-			testutil.WriteFiles(t, root, map[string]string{file: content})
+			testutil.WriteFiles(t, root, map[string]string{file: "run_lists: []\n"})
 			p, err := project.Open(root)
 			if err != nil {
 				t.Fatal(err)
