@@ -70,10 +70,15 @@ mitamae:
     x86_64: 61c6b2a678f45c1374506874846cf362bc418e4914dd0cf5eb56351210dcb930
     aarch64: 60896c5598eab03283e6f1df95fea861217c69f7a259eb6cca097c1dca34c46b
 
-hosts: hosts # inventory directory (default); {layer} places the layers inside it, like nodes/{layer}/recipes
-
-# Node attribute files, from the least to the most specific.
+# Inventory files, from the least to the most specific (the default, with *.yaml after each *.yml).
 # {hostname} and {domain} come from the host; a pattern is skipped when one is empty.
+hosts:
+  - hosts/all/*.yml
+  - hosts/domains/{domain}/*.yml
+  - hosts/hosts/{hostname}/*.yml
+  - hosts/fqdns/{domain}/{hostname}/*.yml
+
+# Node attribute files, in the same way.
 nodes:
   - nodes/all/*.yml
   - nodes/domains/{domain}/*.yml
@@ -103,21 +108,21 @@ hosts/
 └── fqdns/{domain}/{hostname}/*.yml    # a host of a domain
 ```
 
-When `hosts` holds `{layer}`, it is replaced by the path of each layer instead,
-so that the run lists can live next to the node files of the same layer:
+The patterns of `hosts` can lay the inventory out differently,
+like the run lists next to the node files of the same layer, or a file per host:
 
-```
-nodes/
-├── all/recipes/*.yml
-├── domains/{domain}/recipes/*.yml
-├── hosts/{hostname}/recipes/*.yml
-└── fqdns/{domain}/{hostname}/recipes/*.yml
+```yaml
+hosts:
+  - nodes/all/recipes/*.yml
+  - nodes/domains/{domain}/recipes/*.yml
+  - nodes/hosts/{hostname}/recipes/*.yml
+  - inventory/{hostname}.{domain}.yml
 ```
 
 `manaita apply` asks the host for its short hostname (`hostname -s`) and its domain (`dnsdomainname`) before copying anything,
 and picks the layers with them, so a hostname can have a different run list in each domain.
-The host must be declared by a directory of `hosts/` or `fqdns/{domain}/` holding at least one file.
-The files are merged layer by layer and, within a layer, in the order of their names:
+The host must be declared by a pattern holding `{hostname}` that matches at least one file; `{hostname}` never matches a dot, the rest of the FQDN being the domain.
+The files are merged in the order of the patterns and, within a pattern, in the order of their names, each file only once:
 the run lists are concatenated, skipping the recipes already listed.
 
 ```yaml
@@ -135,7 +140,7 @@ run_list:
   - roles/rpi4-8g.rb
 ```
 
-`manaita list` names the hosts by their FQDN, or their hostname alone for `hosts/{hostname}/` which applies in any domain.
+`manaita list` names the hosts by their FQDN, or their hostname alone for a pattern without `{domain}`, like `hosts/{hostname}/`, which applies in any domain.
 `manaita show` takes such a name, without connecting, and lists the inventory files merged into the host.
 `manaita plan` takes the same arguments and flags as `apply`, and runs mitamae with `--dry-run`.
 Without a name, `show`, `plan` and `apply` identify this machine by its hostname and domain, and apply runs mitamae from the project in place.

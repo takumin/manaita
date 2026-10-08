@@ -9,7 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
+	"slices"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -17,8 +17,18 @@ import (
 // FileName is the name of the manifest that marks the root of a project.
 const FileName = "manaita.yml"
 
-// LayerPlaceholder is replaced by the path of a layer in the hosts directory.
-const LayerPlaceholder = "{layer}"
+// DefaultHosts are the patterns of the inventory files when the manifest has
+// none.
+var DefaultHosts = []string{
+	"hosts/all/*.yml",
+	"hosts/all/*.yaml",
+	"hosts/domains/{domain}/*.yml",
+	"hosts/domains/{domain}/*.yaml",
+	"hosts/hosts/{hostname}/*.yml",
+	"hosts/hosts/{hostname}/*.yaml",
+	"hosts/fqdns/{domain}/{hostname}/*.yml",
+	"hosts/fqdns/{domain}/{hostname}/*.yaml",
+}
 
 // Project is a mitamae repository described by its manifest.
 type Project struct {
@@ -26,10 +36,10 @@ type Project struct {
 	Root string `yaml:"-"`
 
 	Mitamae Mitamae `yaml:"mitamae"`
-	// HostsDir is the directory of the host inventory. {layer} is replaced by
-	// the path of each layer, which is appended to it when it has none, so
-	// that the run lists can live next to the node files of the same layer.
-	HostsDir string `yaml:"hosts"`
+	// Inventory are the glob patterns of the inventory files, from the least to
+	// the most specific, like the node patterns. A host is declared by a
+	// pattern holding {hostname} that matches at least one file.
+	Inventory []string `yaml:"hosts"`
 	// Nodes are the glob patterns of the node attribute files, from the least
 	// to the most specific. {hostname} and {domain} are replaced by the values
 	// of the host, and a pattern is skipped when one of them is empty.
@@ -90,17 +100,14 @@ func Load(root string) (*Project, error) {
 		return nil, err
 	}
 	p.Root = root
-	if p.HostsDir == "" {
-		p.HostsDir = "hosts"
+	if p.Inventory == nil {
+		p.Inventory = slices.Clone(DefaultHosts)
 	}
 	if p.Remote.Path == "" {
 		p.Remote.Path = "mitamae"
 	}
 	if p.Mitamae.Version == "" {
 		return nil, fmt.Errorf("%s: mitamae.version is required", FileName)
-	}
-	if strings.Count(p.HostsDir, LayerPlaceholder) > 1 {
-		return nil, fmt.Errorf("%s: hosts must hold %s at most once", FileName, LayerPlaceholder)
 	}
 	if filepath.IsAbs(p.Remote.Path) {
 		return nil, fmt.Errorf("%s: remote.path must be relative to the home directory", FileName)

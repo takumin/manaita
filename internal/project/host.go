@@ -1,10 +1,10 @@
 package project
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -12,19 +12,19 @@ import (
 
 // Host is a machine of the inventory.
 //
-// The inventory is layered like the node files, from the least to the most
-// specific:
+// The inventory files are matched by the patterns of the manifest, from the
+// least to the most specific, like the node files:
 //
-//	all/*.yml
-//	domains/{domain}/*.yml
-//	hosts/{hostname}/*.yml
-//	fqdns/{domain}/{hostname}/*.yml
+//	hosts/all/*.yml
+//	hosts/domains/{domain}/*.yml
+//	hosts/hosts/{hostname}/*.yml
+//	hosts/fqdns/{domain}/{hostname}/*.yml
 //
-// The layers are directories of the hosts directory, or the directories it
-// names with {layer} replaced by their path, like nodes/{layer}/recipes. The
-// files of a layer are merged in the order of their names. A host is declared
-// by a layer of hosts or fqdns holding at least one file, so a hostname may
-// have a different inventory in each domain.
+// {hostname} and {domain} are replaced by the values of the host, and a
+// pattern is skipped when one of them is empty. The files are merged in the
+// order of the patterns and, within a pattern, of their names. A host is
+// declared by a pattern holding {hostname} that matches at least one file, so
+// a hostname may have a different inventory in each domain.
 type Host struct {
 	// Name is the short hostname.
 	Name string
@@ -43,41 +43,39 @@ type hostFile struct {
 	RunList []string `yaml:"run_list"`
 }
 
+// hostPlaceholder marks the inventory patterns declaring the hosts.
+const hostPlaceholder = "{hostname}"
+
 // Hosts returns every host of the inventory, sorted by name.
 func (p *Project) Hosts() ([]*Host, error) {
-	if !strings.Contains(p.HostsDir, LayerPlaceholder) {
-		if files, err := layerFiles(filepath.Join(p.Root, p.HostsDir)); err != nil {
-			return nil, err
-		} else if len(files) > 0 {
-			// Catch the host files of the flat inventory, which are not layers.
-			return nil, fmt.Errorf("unexpected inventory file %s: move it to a layer directory", filepath.Join(p.HostsDir, files[0]))
-		}
-	}
-	prefix, suffix := p.layerAffixes()
 	hosts := []*Host{}
-	for _, pattern := range []string{"hosts/*", "fqdns/*/*"} {
-		matches, err := filepath.Glob(filepath.Join(p.Root, p.layerDir(pattern)))
+	found := map[string]bool{}
+	for _, pattern := range p.Inventory {
+		if !strings.Contains(pattern, hostPlaceholder) {
+			continue
+		}
+		glob, re, err := inventoryPattern(pattern)
 		if err != nil {
 			return nil, err
 		}
+		matches, err := filepath.Glob(filepath.Join(p.Root, glob))
+		if err != nil {
+			return nil, fmt.Errorf("invalid host pattern %q: %w", pattern, err)
+		}
 		for _, m := range matches {
-			// The layer path sits between the parts of the hosts directory.
-			layer := strings.TrimSuffix(strings.TrimPrefix(m, prefix), suffix)
-			parts := strings.Split(filepath.ToSlash(layer), "/")
-			name, domain := parts[len(parts)-1], ""
-			if pattern != "hosts/*" {
-				domain = parts[len(parts)-2]
-			}
-			if hidden(name) || hidden(domain) {
-				continue
-			}
-			files, err := layerFiles(m)
+			rel, err := filepath.Rel(p.Root, m)
 			if err != nil {
 				return nil, err
 			}
-			if len(files) == 0 {
+			vars, ok := capture(re, filepath.ToSlash(rel))
+			name, domain := vars["hostname"], vars["domain"]
+			if !ok || hidden(name) || hidden(domain) || found[name+"."+domain] {
 				continue
 			}
+			if info, err := os.Stat(m); err != nil || !info.Mode().IsRegular() {
+				continue
+			}
+			found[name+"."+domain] = true
 			h, err := p.Host(name, domain)
 			if err != nil {
 				return nil, err
@@ -105,7 +103,7 @@ func (p *Project) HostByFQDN(fqdn string) (*Host, error) {
 }
 
 // Host returns the host name of domain, which is empty for a host without a
-// domain, merged from the files of every layer.
+// domain, merged from the files of every inventory pattern.
 func (p *Project) Host(name, domain string) (*Host, error) {
 	if !validName(name) {
 		return nil, fmt.Errorf("invalid hostname: %q", name)
@@ -113,31 +111,17 @@ func (p *Project) Host(name, domain string) (*Host, error) {
 	if domain != "" && !validName(domain) {
 		return nil, fmt.Errorf("invalid domain: %q", domain)
 	}
-	// own marks the layers declaring the host itself.
-	type layer struct {
-		path string
-		own  bool
-	}
-	layers := []layer{{path: "all"}}
-	if domain != "" {
-		layers = append(layers, layer{path: filepath.Join("domains", domain)})
-	}
-	layers = append(layers, layer{path: filepath.Join("hosts", name), own: true})
-	if domain != "" {
-		layers = append(layers, layer{path: filepath.Join("fqdns", domain, name), own: true})
-	}
-
 	h := &Host{Name: name, Domain: domain, RunList: []string{}, Files: []string{}}
 	declared := false
-	for _, l := range layers {
-		rel := p.layerDir(l.path)
-		files, err := layerFiles(filepath.Join(p.Root, rel))
+	seen := map[string]bool{}
+	for _, pattern := range p.Inventory {
+		files, err := p.match("host", pattern, h, seen)
 		if err != nil {
 			return nil, err
 		}
 		for _, file := range files {
 			f := &hostFile{}
-			if err := decodeFile(filepath.Join(p.Root, rel, file), f); err != nil {
+			if err := decodeFile(filepath.Join(p.Root, file), f); err != nil {
 				return nil, err
 			}
 			for _, r := range f.RunList {
@@ -145,61 +129,95 @@ func (p *Project) Host(name, domain string) (*Host, error) {
 					h.RunList = append(h.RunList, r)
 				}
 			}
-			h.Files = append(h.Files, filepath.ToSlash(filepath.Join(rel, file)))
-			declared = declared || l.own
+			h.Files = append(h.Files, file)
+			declared = declared || strings.Contains(pattern, hostPlaceholder)
 		}
 	}
 	if !declared {
-		return nil, fmt.Errorf("host %s not found in %s", h.FQDN(), p.HostsDir)
+		return nil, fmt.Errorf("host %s not found in the inventory", h.FQDN())
 	}
 	return h, nil
 }
 
-// layerDir returns the directory of the layer path, relative to the project
-// root.
-func (p *Project) layerDir(path string) string {
-	if strings.Contains(p.HostsDir, LayerPlaceholder) {
-		return filepath.Clean(strings.Replace(p.HostsDir, LayerPlaceholder, path, 1))
-	}
-	return filepath.Join(p.HostsDir, path)
-}
-
-// layerAffixes returns the absolute directory before the path of a layer and
-// the part of the hosts directory after it.
-func (p *Project) layerAffixes() (string, string) {
-	before, after, found := strings.Cut(filepath.FromSlash(p.HostsDir), LayerPlaceholder)
-	if !found {
-		before, after = p.HostsDir, ""
-	}
-	prefix := filepath.Join(p.Root, before) + string(filepath.Separator)
-	if after = filepath.Clean(after); after == "." || after == string(filepath.Separator) {
-		after = ""
-	}
-	return prefix, after
-}
-
-// layerFiles returns the names of the YAML files of the layer directory dir,
-// sorted. A missing directory or a file is an empty layer.
-func layerFiles(dir string) ([]string, error) {
-	info, err := os.Stat(dir)
-	if errors.Is(err, os.ErrNotExist) || (err == nil && !info.IsDir()) {
-		return nil, nil
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read the inventory: %w", err)
-	}
-	files := []string{}
-	for _, e := range entries {
-		name := e.Name()
-		if ext := filepath.Ext(name); hidden(name) || (ext != ".yml" && ext != ".yaml") {
+// inventoryPattern returns the glob matching the files of the inventory
+// pattern for any host, and the regexp capturing the placeholders from the
+// paths it matches, relative to the project root.
+func inventoryPattern(pattern string) (string, *regexp.Regexp, error) {
+	clean := filepath.ToSlash(filepath.Clean(pattern))
+	var glob, expr strings.Builder
+	expr.WriteString("^")
+	for i := 0; i < len(clean); i++ {
+		if loc := placeholder.FindStringSubmatchIndex(clean[i:]); loc != nil && loc[0] == 0 {
+			switch name := clean[i+loc[2] : i+loc[3]]; name {
+			case "hostname":
+				// The first label of the FQDN is the hostname.
+				expr.WriteString(`(?P<hostname>[^/.]+)`)
+			case "domain":
+				expr.WriteString(`(?P<domain>[^/]+)`)
+			default:
+				return "", nil, fmt.Errorf("unknown placeholder {%s} in host pattern %q", name, pattern)
+			}
+			glob.WriteString("*")
+			i += loc[1] - 1
 			continue
 		}
-		if info, err := os.Stat(filepath.Join(dir, name)); err == nil && info.Mode().IsRegular() {
-			files = append(files, name)
+		// The paths already match the glob, so its wildcards only skip the
+		// characters between the placeholders.
+		switch c := clean[i]; c {
+		case '*':
+			expr.WriteString(`[^/]*`)
+		case '?':
+			expr.WriteString(`[^/]`)
+		case '[':
+			j := i + 1
+			for ; j < len(clean) && clean[j] != ']'; j++ {
+				if clean[j] == '\\' {
+					j++
+				}
+			}
+			glob.WriteString(clean[i:min(j+1, len(clean))])
+			expr.WriteString(`[^/]`)
+			i = j
+			continue
+		case '\\':
+			if i+1 < len(clean) {
+				glob.WriteString(clean[i : i+2])
+				i++
+				expr.WriteString(regexp.QuoteMeta(clean[i : i+1]))
+				continue
+			}
+		default:
+			expr.WriteString(regexp.QuoteMeta(string(c)))
 		}
+		glob.WriteByte(clean[i])
 	}
-	return files, nil
+	expr.WriteString("$")
+	re, err := regexp.Compile(expr.String())
+	if err != nil {
+		return "", nil, fmt.Errorf("invalid host pattern %q: %w", pattern, err)
+	}
+	return glob.String(), re, nil
+}
+
+// capture returns the placeholders captured by re from path. It reports
+// false when path does not match, or when a placeholder repeated in the
+// pattern captures different values.
+func capture(re *regexp.Regexp, path string) (map[string]string, bool) {
+	m := re.FindStringSubmatch(path)
+	if m == nil {
+		return nil, false
+	}
+	vars := map[string]string{}
+	for i, name := range re.SubexpNames() {
+		if name == "" {
+			continue
+		}
+		if v, ok := vars[name]; ok && v != m[i] {
+			return nil, false
+		}
+		vars[name] = m[i]
+	}
+	return vars, true
 }
 
 func validName(name string) bool {

@@ -27,57 +27,69 @@ var placeholder = regexp.MustCompile(`\{([a-z]+)\}`)
 // patterns. A file matched by several patterns, directly or through a
 // symlink, is only returned the first time.
 func (p *Project) NodeFiles(h *Host) ([]NodeFile, error) {
-	vars := map[string]string{
-		"hostname": h.Name,
-		"domain":   h.Domain,
-	}
 	files := []NodeFile{}
 	seen := map[string]bool{}
 	for _, pattern := range p.Nodes {
-		expanded, ok, err := expand(pattern, vars)
+		matches, err := p.match("node", pattern, h, seen)
 		if err != nil {
 			return nil, err
 		}
-		if !ok {
-			continue
-		}
-		matches, err := filepath.Glob(filepath.Join(p.Root, expanded))
-		if err != nil {
-			return nil, fmt.Errorf("invalid node pattern %q: %w", pattern, err)
-		}
 		for _, m := range matches {
-			info, err := os.Stat(m)
-			if err != nil {
-				return nil, fmt.Errorf("failed to stat %s: %w", m, err)
-			}
-			if !info.Mode().IsRegular() {
-				continue
-			}
-			real, err := filepath.EvalSymlinks(m)
-			if err != nil {
-				return nil, fmt.Errorf("failed to resolve %s: %w", m, err)
-			}
-			if seen[real] {
-				continue
-			}
-			seen[real] = true
-			rel, err := filepath.Rel(p.Root, m)
+			format, err := nodeFormat(m)
 			if err != nil {
 				return nil, err
 			}
-			format, err := nodeFormat(rel)
-			if err != nil {
-				return nil, err
-			}
-			files = append(files, NodeFile{Path: filepath.ToSlash(rel), Format: format})
+			files = append(files, NodeFile{Path: m, Format: format})
 		}
 	}
 	return files, nil
 }
 
-// expand replaces the placeholders of pattern. It reports false when a
-// placeholder has an empty value, so that the pattern is skipped.
-func expand(pattern string, vars map[string]string) (string, bool, error) {
+// match returns the regular files matched by the pattern of kind expanded for
+// h, relative to the project root, skipping the files already seen directly
+// or through a symlink. A pattern with a placeholder of an empty value
+// matches nothing.
+func (p *Project) match(kind, pattern string, h *Host, seen map[string]bool) ([]string, error) {
+	expanded, ok, err := expand(kind, pattern, map[string]string{
+		"hostname": h.Name,
+		"domain":   h.Domain,
+	})
+	if err != nil || !ok {
+		return nil, err
+	}
+	matches, err := filepath.Glob(filepath.Join(p.Root, expanded))
+	if err != nil {
+		return nil, fmt.Errorf("invalid %s pattern %q: %w", kind, pattern, err)
+	}
+	files := []string{}
+	for _, m := range matches {
+		info, err := os.Stat(m)
+		if err != nil {
+			return nil, fmt.Errorf("failed to stat %s: %w", m, err)
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		real, err := filepath.EvalSymlinks(m)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve %s: %w", m, err)
+		}
+		if seen[real] {
+			continue
+		}
+		seen[real] = true
+		rel, err := filepath.Rel(p.Root, m)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, filepath.ToSlash(rel))
+	}
+	return files, nil
+}
+
+// expand replaces the placeholders of the pattern of kind. It reports false
+// when a placeholder has an empty value, so that the pattern is skipped.
+func expand(kind, pattern string, vars map[string]string) (string, bool, error) {
 	ok := true
 	var err error
 	expanded := placeholder.ReplaceAllStringFunc(pattern, func(s string) string {
@@ -85,7 +97,7 @@ func expand(pattern string, vars map[string]string) (string, bool, error) {
 		v, known := vars[name]
 		switch {
 		case !known:
-			err = fmt.Errorf("unknown placeholder %s in node pattern %q", s, pattern)
+			err = fmt.Errorf("unknown placeholder %s in %s pattern %q", s, kind, pattern)
 		case v == "":
 			ok = false
 		case strings.ContainsAny(v, `/\*?[`):
