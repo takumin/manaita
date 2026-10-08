@@ -64,10 +64,11 @@ func action(cfg *config.Config) func(ctx context.Context, cmd *cli.Command) erro
 func showLocal(ctx context.Context, cmd *cli.Command, cfg *config.Config, p *project.Project) error {
 	fetcher := mitamae.NewFetcher(p.Mitamae, cfg.CacheDir, nil)
 	d := &deploy.Deployer{
-		Project: p,
-		Fetcher: fetcher,
-		Recipes: cfg.Recipes,
-		Stderr:  cmd.ErrWriter,
+		Project:  p,
+		Fetcher:  fetcher,
+		StageDir: deploy.LocalStageDir(cfg.CacheDir, p.Root),
+		Recipes:  cfg.Recipes,
+		Stderr:   cmd.ErrWriter,
 	}
 	arch, plan, err := d.LocalPlan(ctx)
 	if err != nil {
@@ -96,7 +97,13 @@ func print(w io.Writer, p *project.Project, plan *deploy.Plan, command string) e
 	}
 	lines = append(lines, "recipes:")
 	for _, r := range plan.Recipes {
-		lines = append(lines, "  - "+r)
+		lines = append(lines, "  - "+r.String())
+	}
+	if len(p.Plugins) > 0 {
+		lines = append(lines, "plugins:")
+		for _, pl := range p.Plugins {
+			lines = append(lines, "  - "+pl.String())
+		}
 	}
 	lines = append(lines, "command:", "  "+command)
 	for _, l := range lines {

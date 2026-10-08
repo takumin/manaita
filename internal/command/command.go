@@ -10,6 +10,7 @@ import (
 
 	"github.com/takumin/manaita/internal/command/apply"
 	"github.com/takumin/manaita/internal/command/list"
+	"github.com/takumin/manaita/internal/command/lock"
 	"github.com/takumin/manaita/internal/command/plan"
 	"github.com/takumin/manaita/internal/command/show"
 	"github.com/takumin/manaita/internal/config"
@@ -89,6 +90,7 @@ func Main(stdout io.Writer, stderr io.Writer, stdin io.Reader, args []string) in
 		show.NewCommands(cfg, flags),
 		plan.NewCommands(cfg, flags),
 		apply.NewCommands(cfg, flags),
+		lock.NewCommands(cfg, flags),
 	}
 
 	// The logger is built per run and carried in the context instead of

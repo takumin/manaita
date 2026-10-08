@@ -2,9 +2,14 @@
 package testutil
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	_ "embed"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 )
 
@@ -66,4 +71,47 @@ func Project(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return root
+}
+
+// Archive returns a tar.gz archive of files, keyed by their slash-separated
+// path, under the top directory top, like the archives of GitHub. An empty
+// content with a path ending in a slash is a directory.
+func Archive(t *testing.T, top string, files map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	headers := []*tar.Header{
+		{Typeflag: tar.TypeXGlobalHeader, Name: "pax_global_header", PAXRecords: map[string]string{"comment": "0123"}},
+		{Typeflag: tar.TypeDir, Name: top + "/", Mode: 0o775},
+	}
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if strings.HasSuffix(name, "/") {
+			headers = append(headers, &tar.Header{Typeflag: tar.TypeDir, Name: top + "/" + name, Mode: 0o775})
+			continue
+		}
+		headers = append(headers, &tar.Header{Typeflag: tar.TypeReg, Name: top + "/" + name, Mode: 0o664, Size: int64(len(files[name]))})
+	}
+	for _, h := range headers {
+		if err := tw.WriteHeader(h); err != nil {
+			t.Fatal(err)
+		}
+		if h.Typeflag == tar.TypeReg {
+			if _, err := tw.Write([]byte(files[strings.TrimPrefix(h.Name, top+"/")])); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }

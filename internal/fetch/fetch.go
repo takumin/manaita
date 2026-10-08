@@ -157,6 +157,16 @@ func notFound(err error) bool {
 // perm. The file must match sum, its SHA-256 in hex; a mismatching file is an
 // error like a failed download, and is never written to path.
 func (f *Fetcher) File(ctx context.Context, origin, path, sum string, perm os.FileMode) error {
+	return f.Get(ctx, origin, func(target string, body io.Reader) error {
+		return writeFile(target, body, path, sum, perm)
+	})
+}
+
+// Get downloads origin through the proxy list, passing the response body to
+// read with the URL it comes from. An error of read, such as a checksum
+// mismatch, is a failed download like any other, so read must leave nothing
+// behind when it fails.
+func (f *Fetcher) Get(ctx context.Context, origin string, read func(target string, body io.Reader) error) error {
 	logger := logging.FromContext(ctx)
 	var errs []error
 	for i, s := range f.sources {
@@ -174,7 +184,7 @@ func (f *Fetcher) File(ctx context.Context, origin, path, sum string, perm os.Fi
 			target = rewritten
 		}
 		logger.DebugContext(ctx, "downloading", slog.String("url", target))
-		err := f.download(ctx, target, s.base, path, sum, perm)
+		err := f.download(ctx, target, s.base, read)
 		if err == nil {
 			return nil
 		}
@@ -197,9 +207,9 @@ func (f *Fetcher) File(ctx context.Context, origin, path, sum string, perm os.Fi
 	return errors.Join(errs...)
 }
 
-// download downloads target to path through a temporary file, checking sum.
-// base is the cache server target is on, empty for the origin.
-func (f *Fetcher) download(ctx context.Context, target, base, path, sum string, perm os.FileMode) error {
+// download downloads target, passing the body to read. base is the cache
+// server target is on, empty for the origin.
+func (f *Fetcher) download(ctx context.Context, target, base string, read func(string, io.Reader) error) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return err
@@ -213,7 +223,12 @@ func (f *Fetcher) download(ctx context.Context, target, base, path, sum string, 
 	if res.StatusCode != http.StatusOK {
 		return &StatusError{URL: target, Status: res.Status, Code: res.StatusCode}
 	}
+	return read(target, res.Body)
+}
 
+// writeFile writes body, downloaded from target, to path through a temporary
+// file, checking sum.
+func writeFile(target string, body io.Reader, path, sum string, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("failed to create %s: %w", dir, err)
@@ -224,7 +239,7 @@ func (f *Fetcher) download(ctx context.Context, target, base, path, sum string, 
 	}
 	defer os.Remove(tmp.Name()) //nolint:errcheck
 	h := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(tmp, h), res.Body); err != nil {
+	if _, err := io.Copy(io.MultiWriter(tmp, h), body); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("failed to download %s: %w", target, err)
 	}

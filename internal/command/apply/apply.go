@@ -19,6 +19,7 @@ import (
 	"github.com/takumin/manaita/internal/fetch"
 	"github.com/takumin/manaita/internal/logging"
 	"github.com/takumin/manaita/internal/mitamae"
+	"github.com/takumin/manaita/internal/plugin"
 	"github.com/takumin/manaita/internal/project"
 )
 
@@ -83,9 +84,16 @@ func Action(cfg *config.Config, dryRun bool) cli.ActionFunc {
 		if err != nil {
 			return err
 		}
+		lock, err := plugin.ReadLock(p.Root)
+		if err != nil {
+			return err
+		}
 		d := &deploy.Deployer{
-			Project: p,
-			Fetcher: mitamae.NewFetcher(p.Mitamae, cfg.CacheDir, dl),
+			Project:  p,
+			Fetcher:  mitamae.NewFetcher(p.Mitamae, cfg.CacheDir, dl),
+			Plugins:  plugin.NewStore(mitamae.CacheDir(cfg.CacheDir), dl),
+			Lock:     lock,
+			StageDir: deploy.LocalStageDir(cfg.CacheDir, p.Root),
 			Options: mitamae.Options{
 				DryRun:   dryRun,
 				LogLevel: cfg.MitamaeLogLevel,

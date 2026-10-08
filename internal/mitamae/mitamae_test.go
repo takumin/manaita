@@ -225,8 +225,8 @@ func TestLocalArgs(t *testing.T) {
 		t.Errorf("want %v, got %v", want, got)
 	}
 
-	got = mitamae.LocalArgs(nil, recipes[:1], mitamae.Options{DryRun: true, LogLevel: "debug", NoColor: true})
-	want = []string{"local", "--dry-run", "--log-level=debug", "--no-color", "helpers/keeper.rb"}
+	got = mitamae.LocalArgs(nil, recipes[:1], mitamae.Options{DryRun: true, LogLevel: "debug", NoColor: true, Plugins: ".manaita/plugins"})
+	want = []string{"local", "--dry-run", "--log-level=debug", "--no-color", "--plugins=.manaita/plugins", "helpers/keeper.rb"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("want %v, got %v", want, got)
 	}

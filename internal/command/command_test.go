@@ -94,6 +94,49 @@ func TestSubcommands(t *testing.T) {
 	}
 }
 
+func TestPluginCommands(t *testing.T) {
+	t.Parallel()
+
+	const rev = "0123456789abcdef0123456789abcdef01234567"
+	root := testutil.Project(t)
+	testutil.WriteFiles(t, root, map[string]string{
+		"manaita.yml": testutil.Manifest + "plugins:\n- repo: github.com/o/itamae-plugin-recipe-apt\n  rev: " + rev + "\n",
+	})
+	plain := testutil.Project(t)
+	testutil.WriteFiles(t, plain, map[string]string{"manaita.lock": "stale\n"})
+
+	cases := map[string]struct {
+		args   []string
+		exit   int
+		stdout []string
+	}{
+		"show plugin recipe": {[]string{"-C", root, "show", "-r", "apt::source", "dsk"}, command.ExitOK, []string{
+			"  - apt::source", "plugins:", "  - github.com/o/itamae-plugin-recipe-apt@" + rev,
+			"--plugins=.manaita/plugins", " .manaita/recipes/include.apt.source.rb",
+		}},
+		"show unknown plugin recipe": {[]string{"-C", root, "show", "-r", "other::source", "dsk"}, command.ExitNG, nil},
+		"lock without plugins":       {[]string{"-C", plain, "--proxy", "off", "lock"}, command.ExitOK, nil},
+		"lock outside project":       {[]string{"-C", "/", "lock"}, command.ExitNG, nil},
+	}
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			exit := command.Main(&stdout, &stderr, strings.NewReader(""), append([]string{"a"}, tt.args...))
+			if exit != tt.exit {
+				t.Fatalf("want exit %d, got %d: %s %s", tt.exit, exit, stdout.String(), stderr.String())
+			}
+			for _, s := range tt.stdout {
+				if !strings.Contains(stdout.String(), s) {
+					t.Errorf("stdout does not contain %q:\n%s", s, stdout.String())
+				}
+			}
+		})
+	}
+	if _, err := os.Stat(filepath.Join(plain, "manaita.lock")); !os.IsNotExist(err) {
+		t.Errorf("the lock file of a project without plugins is removed: %v", err)
+	}
+}
+
 func TestConfigFile(t *testing.T) {
 	t.Parallel()
 
