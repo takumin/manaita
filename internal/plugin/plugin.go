@@ -18,6 +18,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -141,7 +142,9 @@ func (s *Store) download(ctx context.Context, pl project.Plugin, verify func(has
 }
 
 // extract extracts the tar.gz archive r into dir, without the top directory
-// of the archive. Only directories and regular files are allowed.
+// of the archive. Only directories, regular files and symlinks are allowed.
+// The symlinks are created last, so that nothing is written through them,
+// and Hash checks where they lead.
 func extract(r io.Reader, dir string) error {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
@@ -149,9 +152,18 @@ func extract(r io.Reader, dir string) error {
 	}
 	defer gz.Close() //nolint:errcheck
 	tr := tar.NewReader(gz)
+	var links [][2]string // the paths and the targets of the symlinks
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
+			for _, l := range links {
+				if err := os.MkdirAll(filepath.Dir(l[0]), 0o755); err != nil { // #nosec G301 -- mitamae reads the plugins as root
+					return err
+				}
+				if err := os.Symlink(l[1], l[0]); err != nil {
+					return err
+				}
+			}
 			return gz.Close()
 		}
 		if err != nil {
@@ -178,8 +190,14 @@ func extract(r io.Reader, dir string) error {
 			if err := writeFile(path, tr, hdr.FileInfo().Mode()); err != nil {
 				return err
 			}
+		case tar.TypeSymlink:
+			target := filepath.FromSlash(hdr.Linkname)
+			if filepath.IsAbs(target) || strings.ContainsAny(hdr.Linkname, "\\\n") {
+				return fmt.Errorf("invalid symlink in the archive: %q -> %q", hdr.Name, hdr.Linkname)
+			}
+			links = append(links, [2]string{path, target})
 		default:
-			return fmt.Errorf("unsupported entry in the archive: %q is not a directory or a regular file", hdr.Name)
+			return fmt.Errorf("unsupported entry in the archive: %q is not a directory, a regular file or a symlink", hdr.Name)
 		}
 	}
 }
@@ -207,42 +225,80 @@ func writeFile(path string, r io.Reader, mode fs.FileMode) error {
 // Hash returns the h1 hash of the files under dir, as go.sum hashes the
 // modules: the SHA-256 of the lines "<SHA-256 of the file in hex>  <path>",
 // sorted by path, encoded in base64 after "h1:". The file modes are not part
-// of the hash. Only directories and regular files are allowed.
+// of the hash. Only directories, regular files and symlinks are allowed. The
+// symlinks must lead under dir, and are followed, as they are copied to the
+// remote hosts as what they lead to: the hash is the one of that copy. A
+// symlink to a directory holding it is refused, as it makes a loop.
 func Hash(dir string) (string, error) {
-	var files []string
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		switch {
-		case d.IsDir():
-			return nil
-		case !d.Type().IsRegular():
-			return fmt.Errorf("unexpected file %s: not a directory or a regular file", path)
-		}
-		rel, err := filepath.Rel(dir, path)
-		if err != nil {
-			return err
-		}
-		files = append(files, filepath.ToSlash(rel))
-		return nil
-	})
+	root, err := filepath.EvalSymlinks(dir)
 	if err != nil {
+		return "", err
+	}
+	files := map[string]string{} // the real paths by their names
+	if err := walk(root, root, "", map[string]bool{}, files); err != nil {
 		return "", err
 	}
 	if len(files) == 0 {
 		return "", fmt.Errorf("no file in %s", dir)
 	}
-	sort.Strings(files)
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
 	summary := sha256.New()
-	for _, name := range files {
-		sum, err := fileSHA256(filepath.Join(dir, filepath.FromSlash(name)))
+	for _, name := range names {
+		sum, err := fileSHA256(files[name])
 		if err != nil {
 			return "", err
 		}
 		fmt.Fprintf(summary, "%x  %s\n", sum, name) //nolint:errcheck // a hash never fails to write
 	}
 	return "h1:" + base64.StdEncoding.EncodeToString(summary.Sum(nil)), nil
+}
+
+// walk adds to files the files of the directory real, whose symlinks are
+// evaluated, named under name. The symlinks must lead under root. walking
+// holds the directories being walked, to refuse a symlink leading to one.
+func walk(root, real, name string, walking map[string]bool, files map[string]string) error {
+	if walking[real] {
+		return fmt.Errorf("symlink loop at %s: %s is a directory holding it", name, real)
+	}
+	walking[real] = true
+	defer delete(walking, real)
+	entries, err := os.ReadDir(real)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		file, rel := filepath.Join(real, e.Name()), path.Join(name, e.Name())
+		info, err := e.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			if file, err = filepath.EvalSymlinks(file); err != nil {
+				return fmt.Errorf("invalid symlink %s: %w", rel, err)
+			}
+			if r, err := filepath.Rel(root, file); err != nil || !filepath.IsLocal(r) {
+				return fmt.Errorf("invalid symlink %s: %s is outside of %s", rel, file, root)
+			}
+			if info, err = os.Stat(file); err != nil {
+				return err
+			}
+		}
+		switch {
+		case info.IsDir():
+			if err := walk(root, file, rel, walking, files); err != nil {
+				return err
+			}
+		case info.Mode().IsRegular():
+			files[rel] = file
+		default:
+			return fmt.Errorf("unexpected file %s: not a directory, a regular file or a symlink", rel)
+		}
+	}
+	return nil
 }
 
 func fileSHA256(path string) ([]byte, error) {

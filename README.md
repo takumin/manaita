@@ -157,7 +157,8 @@ A plugin depending on another is not resolved: list every plugin.
 The plugins are downloaded from `https://codeload.github.com/<owner>/<repo>/tar.gz/<rev>`, possibly through a [cache server](#cache-servers),
 extracted into `plugins/<repo>/<rev>` of the cache directory, and verified against their hashes in `manaita.lock`, next to `manaita.yml`.
 The hash is computed from the extracted files like the `h1:` hashes of `go.sum`, since the archives of GitHub may change for the same commit.
-An archive holding anything but directories and regular files is refused, and the file modes are not part of the hash.
+An archive holding anything but directories, regular files and symlinks is refused, and the file modes are not part of the hash.
+A symlink must lead inside the plugin, without a loop; it is hashed, and copied to the remote hosts, as what it leads to.
 
 ```
 github.com/takumin/itamae-plugin-recipe-apt 3f2a6c0e9b1d4a7f8e5c2b0a9d6f3e1c7b4a8d2e h1:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=

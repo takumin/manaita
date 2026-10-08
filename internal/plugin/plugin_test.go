@@ -55,11 +55,57 @@ func TestHash(t *testing.T) {
 	if _, err := plugin.Hash(filepath.Join(dir, "missing")); err == nil {
 		t.Error("expected a missing directory error")
 	}
-	if err := os.Symlink("a.rb", filepath.Join(dir, "link.rb")); err != nil {
+}
+
+func TestHashSymlinks(t *testing.T) {
+	// The symlinks are hashed as what they lead to, like their copy.
+	copied := t.TempDir()
+	testutil.WriteFiles(t, copied, map[string]string{
+		"lib/a.rb": "a\n", "lib/sub/b.rb": "b\n", "lib/c.rb": "a\n",
+		"mrblib/a.rb": "a\n", "mrblib/sub/b.rb": "b\n", "mrblib/c.rb": "a\n",
+		"other/sub/b.rb": "b\n",
+	})
+	want, err := plugin.Hash(copied)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := plugin.Hash(dir); err == nil {
-		t.Error("expected a symlink error")
+	dir := t.TempDir()
+	testutil.WriteFiles(t, dir, map[string]string{"lib/a.rb": "a\n", "lib/sub/b.rb": "b\n"})
+	if err := os.Mkdir(filepath.Join(dir, "other"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	links := map[string]string{"lib/c.rb": "a.rb", "mrblib": "lib", "other/sub": "../mrblib/sub"}
+	for link, target := range links {
+		if err := os.Symlink(target, filepath.Join(dir, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := plugin.Hash(dir); err != nil || got != want {
+		t.Errorf("want %s, got %s (%v)", want, got, err)
+	}
+
+	cases := map[string]map[string]string{
+		"outside":       {"sub/link.rb": "../../outside.rb"},
+		"outside dir":   {"sub/link": "../.."},
+		"dangling":      {"sub/link.rb": "missing.rb"},
+		"loop":          {"sub/link": ".."},
+		"self":          {"sub/link": "link"},
+		"indirect loop": {"sub/link": "../other", "other/link": "../sub"},
+	}
+	for name, links := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			root := filepath.Join(dir, "plugin")
+			testutil.WriteFiles(t, dir, map[string]string{"outside.rb": "", "plugin/a.rb": "", "plugin/sub/b.rb": "", "plugin/other/c.rb": ""})
+			for link, target := range links {
+				if err := os.Symlink(target, filepath.Join(root, link)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := plugin.Hash(root); err == nil {
+				t.Error("expected a symlink error")
+			}
+		})
 	}
 }
 
@@ -178,11 +224,14 @@ func TestStoreInvalidArchives(t *testing.T) {
 		return buf.Bytes()
 	}
 	cases := map[string][]byte{
-		"not gzip":  []byte("plain"),
-		"symlink":   entry(&tar.Header{Typeflag: tar.TypeSymlink, Name: "top/link", Linkname: "/etc/passwd"}, ""),
-		"traversal": entry(&tar.Header{Typeflag: tar.TypeReg, Name: "top/../../x", Size: 1, Mode: 0o644}, "x"),
-		"absolute":  entry(&tar.Header{Typeflag: tar.TypeReg, Name: "top//etc/x", Size: 1, Mode: 0o644}, "x"),
-		"empty":     testutil.Archive(t, "top", nil),
+		"not gzip":         []byte("plain"),
+		"absolute symlink": entry(&tar.Header{Typeflag: tar.TypeSymlink, Name: "top/link", Linkname: "/etc/passwd"}, ""),
+		"outside symlink":  entry(&tar.Header{Typeflag: tar.TypeSymlink, Name: "top/link", Linkname: "../../etc/passwd"}, ""),
+		"dangling symlink": entry(&tar.Header{Typeflag: tar.TypeSymlink, Name: "top/link", Linkname: "missing"}, ""),
+		"hard link":        entry(&tar.Header{Typeflag: tar.TypeLink, Name: "top/link", Linkname: "top/"}, ""),
+		"traversal":        entry(&tar.Header{Typeflag: tar.TypeReg, Name: "top/../../x", Size: 1, Mode: 0o644}, "x"),
+		"absolute":         entry(&tar.Header{Typeflag: tar.TypeReg, Name: "top//etc/x", Size: 1, Mode: 0o644}, "x"),
+		"empty":            testutil.Archive(t, "top", nil),
 	}
 	for name, archive := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -194,6 +243,43 @@ func TestStoreInvalidArchives(t *testing.T) {
 				t.Errorf("nothing must be left in the cache: %v", entries)
 			}
 		})
+	}
+}
+
+func TestStoreSymlink(t *testing.T) {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	// The symlinks come before their targets, as git sorts the entries.
+	headers := []*tar.Header{
+		{Typeflag: tar.TypeSymlink, Name: "top/mrblib", Linkname: "recipe"},
+		{Typeflag: tar.TypeSymlink, Name: "top/recipe/a.rb", Linkname: "z.rb"},
+		{Typeflag: tar.TypeReg, Name: "top/recipe/z.rb", Size: 2, Mode: 0o644},
+	}
+	for _, hdr := range headers {
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := tw.Write([]byte("z\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := server(t, buf.Bytes())
+	if _, err := s.Download(context.Background(), apt); err != nil {
+		t.Fatal(err)
+	}
+	target, err := os.Readlink(filepath.Join(s.Path(apt), "recipe", "a.rb"))
+	if err != nil || target != "z.rb" {
+		t.Errorf("want a symlink to z.rb, got %q (%v)", target, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(s.Path(apt), "mrblib", "a.rb")); err != nil || string(got) != "z\n" {
+		t.Errorf("want z.rb through the symlinks, got %q (%v)", got, err)
 	}
 }
 
