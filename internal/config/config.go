@@ -5,6 +5,15 @@ type Config struct {
 	LogFormat string
 	Chdir     string
 
+	// ConfigFile is the path of the configuration file of this machine,
+	// read by File. Empty reads no file.
+	ConfigFile string
+	// File holds the values of ConfigFile, the last source of the flags.
+	File *File
+
+	CacheDir string
+	Proxy    string
+
 	MitamaeLogLevel string
 	Recipes         []string
 	Parallel        int

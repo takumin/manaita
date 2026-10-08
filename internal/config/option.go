@@ -27,3 +27,9 @@ type Parallel int
 func (o Parallel) Apply(c *Config) {
 	c.Parallel = int(o)
 }
+
+type ConfigFile string
+
+func (o ConfigFile) Apply(c *Config) {
+	c.ConfigFile = string(o)
+}

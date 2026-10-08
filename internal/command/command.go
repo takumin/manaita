@@ -13,8 +13,10 @@ import (
 	"github.com/takumin/manaita/internal/command/plan"
 	"github.com/takumin/manaita/internal/command/show"
 	"github.com/takumin/manaita/internal/config"
+	"github.com/takumin/manaita/internal/fetch"
 	"github.com/takumin/manaita/internal/logging"
 	"github.com/takumin/manaita/internal/metadata"
+	"github.com/takumin/manaita/internal/mitamae"
 	"github.com/takumin/manaita/internal/version"
 )
 
@@ -29,14 +31,25 @@ func Main(stdout io.Writer, stderr io.Writer, stdin io.Reader, args []string) in
 		config.LogFormat("text"),
 		config.Chdir("."),
 		config.Parallel(4),
+		config.ConfigFile(config.DefaultFile),
 	)
+	cfg.File = config.NewFile(&cfg.ConfigFile)
 
+	// The configuration file comes first, so that its path is known before
+	// the other flags read their values from it.
 	flags := []cli.Flag{
+		&cli.StringFlag{
+			Name:        "config",
+			Usage:       "configuration file of this machine, holding the flags by their names with underscores (empty for none)",
+			Sources:     cli.EnvVars("MANAITA_CONFIG"),
+			Value:       cfg.ConfigFile,
+			Destination: &cfg.ConfigFile,
+		},
 		&cli.StringFlag{
 			Name:        "log-level",
 			Aliases:     []string{"l"},
 			Usage:       "log level",
-			Sources:     cli.EnvVars("LOG_LEVEL"),
+			Sources:     cfg.File.Sources("log_level", "LOG_LEVEL"),
 			Value:       cfg.LogLevel,
 			Destination: &cfg.LogLevel,
 		},
@@ -44,7 +57,7 @@ func Main(stdout io.Writer, stderr io.Writer, stdin io.Reader, args []string) in
 			Name:        "log-format",
 			Aliases:     []string{"f"},
 			Usage:       "log format",
-			Sources:     cli.EnvVars("LOG_FORMAT"),
+			Sources:     cfg.File.Sources("log_format", "LOG_FORMAT"),
 			Value:       cfg.LogFormat,
 			Destination: &cfg.LogFormat,
 		},
@@ -52,9 +65,22 @@ func Main(stdout io.Writer, stderr io.Writer, stdin io.Reader, args []string) in
 			Name:        "chdir",
 			Aliases:     []string{"C"},
 			Usage:       "directory inside the project",
-			Sources:     cli.EnvVars("MANAITA_CHDIR"),
+			Sources:     cfg.File.Sources("chdir", "MANAITA_CHDIR"),
 			Value:       cfg.Chdir,
 			Destination: &cfg.Chdir,
+		},
+		&cli.StringFlag{
+			Name:        "cache-dir",
+			Usage:       "cache directory (default: manaita under the user cache directory, else " + mitamae.SystemCacheDir + ")",
+			Sources:     cfg.File.Sources("cache_dir", "MANAITA_CACHE_DIR"),
+			Destination: &cfg.CacheDir,
+		},
+		&cli.StringFlag{
+			Name:        "proxy",
+			Usage:       "cache servers to download through, like GOPROXY (e.g. http://cache.internal|direct)",
+			Sources:     cfg.File.Sources("proxy", "MANAITA_PROXY"),
+			Value:       fetch.Direct,
+			Destination: &cfg.Proxy,
 		},
 	}
 
@@ -69,6 +95,9 @@ func Main(stdout io.Writer, stderr io.Writer, stdin io.Reader, args []string) in
 	// replacing slog.Default, so that concurrent runs do not share it.
 	logger := slog.New(slog.NewTextHandler(stderr, nil))
 	before := func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
+		if err := cfg.File.Load(); err != nil {
+			return ctx, err
+		}
 		l, err := logging.New(cmd.ErrWriter, cfg.LogLevel, cfg.LogFormat)
 		if err != nil {
 			return ctx, err

@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/takumin/manaita/internal/deploy"
+	"github.com/takumin/manaita/internal/fetch"
 	"github.com/takumin/manaita/internal/mitamae"
 	"github.com/takumin/manaita/internal/project"
 	"github.com/takumin/manaita/internal/testutil"
@@ -134,11 +135,11 @@ func newDeployer(t *testing.T, p *project.Project, runner deploy.Runner) *deploy
 	return &deploy.Deployer{
 		Project: p,
 		Fetcher: &mitamae.Fetcher{
-			Version:   "2.0.3",
-			Checksums: map[string]string{"x86_64": checksum, "aarch64": checksum, "armhf": checksum, "i386": checksum},
-			CacheDir:  t.TempDir(),
-			BaseURL:   srv.URL,
-			Client:    srv.Client(),
+			Version:    "2.0.3",
+			Checksums:  map[string]string{"x86_64": checksum, "aarch64": checksum, "armhf": checksum, "i386": checksum},
+			CacheDir:   t.TempDir(),
+			BaseURL:    srv.URL,
+			Downloader: direct(t),
 		},
 		Options: mitamae.Options{DryRun: true},
 		Runner:  runner,
@@ -146,6 +147,15 @@ func newDeployer(t *testing.T, p *project.Project, runner deploy.Runner) *deploy
 		Stdout:  &bytes.Buffer{},
 		Stderr:  &bytes.Buffer{},
 	}
+}
+
+func direct(t *testing.T) *fetch.Fetcher {
+	t.Helper()
+	dl, err := fetch.New(fetch.Direct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dl
 }
 
 const identify = "uname -m && hostname -s && { dnsdomainname 2>/dev/null || true; }"
