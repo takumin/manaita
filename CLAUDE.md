@@ -37,9 +37,10 @@
   - `show` - Show the node files, recipes and command of a host
   - `list` - List the hosts of the inventory
   - `complete` - Shell completion of the subcommands
-- `/internal/config` - Configuration management
+- `/internal/config` - Configuration management, with the configuration file read as the last source of the flags
 - `/internal/project` - Load a project: manifest, host inventory, node attribute files and recipes
 - `/internal/deploy` - Run the recipes on hosts, locally or over ssh with the project copied by rsync
+- `/internal/fetch` - Download files from their origin or through the cache servers of a proxy list, verifying their checksums
 - `/internal/mitamae` - Fetch the mitamae release binaries and build their command lines
 - `/internal/logging` - Build the logger of a command run and carry it in a context
 - `/internal/metadata` - Application name, description and author

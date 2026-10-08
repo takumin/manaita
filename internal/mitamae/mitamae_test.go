@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/takumin/manaita/internal/fetch"
 	"github.com/takumin/manaita/internal/mitamae"
 	"github.com/takumin/manaita/internal/project"
 )
@@ -43,21 +44,22 @@ func TestLocalArch(t *testing.T) {
 
 func TestCacheDir(t *testing.T) {
 	cases := map[string]struct {
+		dir  string
 		env  map[string]string
 		want string
 	}{
-		"env":         {map[string]string{mitamae.CacheDirEnv: "/srv/cache", "XDG_CACHE_HOME": "/xdg", "HOME": "/home/u"}, "/srv/cache"},
-		"xdg":         {map[string]string{mitamae.CacheDirEnv: "", "XDG_CACHE_HOME": "/xdg", "HOME": "/home/u"}, "/xdg/manaita"},
-		"home":        {map[string]string{mitamae.CacheDirEnv: "", "XDG_CACHE_HOME": "", "HOME": "/home/u"}, "/home/u/.cache/manaita"},
-		"env no home": {map[string]string{mitamae.CacheDirEnv: "/srv/cache", "XDG_CACHE_HOME": "", "HOME": ""}, "/srv/cache"},
-		"system":      {map[string]string{mitamae.CacheDirEnv: "", "XDG_CACHE_HOME": "", "HOME": ""}, mitamae.SystemCacheDir},
+		"dir":         {"/srv/cache", map[string]string{"XDG_CACHE_HOME": "/xdg", "HOME": "/home/u"}, "/srv/cache"},
+		"xdg":         {"", map[string]string{"XDG_CACHE_HOME": "/xdg", "HOME": "/home/u"}, "/xdg/manaita"},
+		"home":        {"", map[string]string{"XDG_CACHE_HOME": "", "HOME": "/home/u"}, "/home/u/.cache/manaita"},
+		"dir no home": {"/srv/cache", map[string]string{"XDG_CACHE_HOME": "", "HOME": ""}, "/srv/cache"},
+		"system":      {"", map[string]string{"XDG_CACHE_HOME": "", "HOME": ""}, mitamae.SystemCacheDir},
 	}
 	for name, tt := range cases {
 		t.Run(name, func(t *testing.T) {
 			for k, v := range tt.env {
 				t.Setenv(k, v)
 			}
-			if got := mitamae.CacheDir(); got != tt.want {
+			if got := mitamae.CacheDir(tt.dir); got != tt.want {
 				t.Errorf("want %s, got %s", tt.want, got)
 			}
 		})
@@ -65,11 +67,20 @@ func TestCacheDir(t *testing.T) {
 }
 
 func TestNewFetcher(t *testing.T) {
-	t.Setenv(mitamae.CacheDirEnv, "/srv/cache")
-	f := mitamae.NewFetcher(project.Mitamae{Version: "2.0.3"})
-	if f.Version != "2.0.3" || f.BaseURL == "" || f.Client == nil || f.CacheDir != "/srv/cache/mitamae" || f.Command != "mitamae" {
+	dl := direct(t)
+	f := mitamae.NewFetcher(project.Mitamae{Version: "2.0.3"}, "/srv/cache", dl)
+	if f.Version != "2.0.3" || f.BaseURL != mitamae.ReleaseURL || f.Downloader != dl || f.CacheDir != "/srv/cache/mitamae" || f.Command != "mitamae" {
 		t.Errorf("unexpected fetcher: %+v", f)
 	}
+}
+
+func direct(t *testing.T) *fetch.Fetcher {
+	t.Helper()
+	dl, err := fetch.New(fetch.Direct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dl
 }
 
 func TestFetchInstalled(t *testing.T) {
@@ -96,10 +107,10 @@ func TestFetchInstalled(t *testing.T) {
 			"x86_64":  hex.EncodeToString(sum[:]),
 			"aarch64": hex.EncodeToString(downloaded[:]),
 		},
-		CacheDir: t.TempDir(),
-		Command:  "mitamae",
-		BaseURL:  srv.URL,
-		Client:   srv.Client(),
+		CacheDir:   t.TempDir(),
+		Command:    "mitamae",
+		BaseURL:    srv.URL,
+		Downloader: direct(t),
 	}
 	ctx := context.Background()
 
@@ -148,9 +159,9 @@ func TestFetch(t *testing.T) {
 			"aarch64": hex.EncodeToString(sum[:]),
 			"armhf":   "deadbeef",
 		},
-		CacheDir: t.TempDir(),
-		BaseURL:  srv.URL,
-		Client:   srv.Client(),
+		CacheDir:   t.TempDir(),
+		BaseURL:    srv.URL,
+		Downloader: direct(t),
 	}
 	ctx := context.Background()
 
@@ -191,8 +202,11 @@ func TestFetchUnreachable(t *testing.T) {
 		Checksums: map[string]string{"x86_64": "00"},
 		CacheDir:  t.TempDir(),
 		BaseURL:   "http://127.0.0.1:0",
-		Client:    http.DefaultClient,
 	}
+	if _, err := f.Fetch(context.Background(), "x86_64"); err == nil {
+		t.Error("expected an error without a downloader")
+	}
+	f.Downloader = direct(t)
 	if _, err := f.Fetch(context.Background(), "x86_64"); err == nil {
 		t.Error("expected an error")
 	}

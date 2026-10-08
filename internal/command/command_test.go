@@ -2,6 +2,8 @@ package command_test
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -87,6 +89,55 @@ func TestSubcommands(t *testing.T) {
 				if !strings.Contains(stdout.String(), s) {
 					t.Errorf("stdout does not contain %q:\n%s", s, stdout.String())
 				}
+			}
+		})
+	}
+}
+
+func TestConfigFile(t *testing.T) {
+	t.Parallel()
+
+	root := testutil.Project(t)
+	dir := t.TempDir()
+	write := func(content string) string {
+		t.Helper()
+		f, err := os.CreateTemp(dir, "*.yml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close() //nolint:errcheck
+		if _, err := f.WriteString(content); err != nil {
+			t.Fatal(err)
+		}
+		return f.Name()
+	}
+	chdir := write("chdir: " + root + "\n")
+
+	cases := map[string]struct {
+		args []string
+		exit int
+	}{
+		"chdir":             {[]string{"--config", chdir, "list"}, command.ExitOK},
+		"after subcommand":  {[]string{"list", "--config", chdir}, command.ExitOK},
+		"flag over file":    {[]string{"--config", chdir, "-C", "/", "list"}, command.ExitNG},
+		"none":              {[]string{"--config", "", "-C", root, "list"}, command.ExitOK},
+		"missing":           {[]string{"--config", filepath.Join(dir, "missing.yml"), "-C", root, "list"}, command.ExitNG},
+		"unknown key":       {[]string{"--config", write("unknown: 1\n"), "-C", root, "list"}, command.ExitNG},
+		"unknown key after": {[]string{"-C", root, "list", "--config", write("unknown: 1\n")}, command.ExitNG},
+		"bad log level":     {[]string{"--config", write("log_level: unknown\n"), "-C", root, "list"}, command.ExitNG},
+		"bad parallel":      {[]string{"--config", write("parallel: 0\n"), "-C", root, "apply", "dsk", "rpi4"}, command.ExitNG},
+		"bad proxy":         {[]string{"--config", write("proxy: ftp://cache.internal\n"), "-C", root, "apply", "dsk"}, command.ExitNG},
+		"bad proxy flag":    {[]string{"-C", root, "plan", "--proxy", "cache.internal", "dsk"}, command.ExitNG},
+		"proxy for show":    {[]string{"--config", write("proxy: http://cache.internal|direct\ncache_dir: /srv/cache\n"), "-C", root, "show", "dsk"}, command.ExitOK},
+	}
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			var stdout, stderr bytes.Buffer
+			exit := command.Main(&stdout, &stderr, strings.NewReader(""), append([]string{"a"}, tt.args...))
+			if exit != tt.exit {
+				t.Fatalf("want exit %d, got %d: %s %s", tt.exit, exit, stdout.String(), stderr.String())
 			}
 		})
 	}

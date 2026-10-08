@@ -16,6 +16,7 @@ import (
 	"github.com/takumin/manaita/internal/command/complete"
 	"github.com/takumin/manaita/internal/config"
 	"github.com/takumin/manaita/internal/deploy"
+	"github.com/takumin/manaita/internal/fetch"
 	"github.com/takumin/manaita/internal/logging"
 	"github.com/takumin/manaita/internal/mitamae"
 	"github.com/takumin/manaita/internal/project"
@@ -39,6 +40,7 @@ func Flags(cfg *config.Config) []cli.Flag {
 			Name:        "mitamae-log-level",
 			Aliases:     []string{"L"},
 			Usage:       "log level of mitamae (debug, info, warn, error, fatal)",
+			Sources:     cfg.File.Sources("mitamae_log_level"),
 			Destination: &cfg.MitamaeLogLevel,
 		},
 		&cli.StringSliceFlag{
@@ -51,6 +53,7 @@ func Flags(cfg *config.Config) []cli.Flag {
 			Name:        "parallel",
 			Aliases:     []string{"j"},
 			Usage:       "number of hosts applied at the same time",
+			Sources:     cfg.File.Sources("parallel"),
 			Value:       cfg.Parallel,
 			Destination: &cfg.Parallel,
 		},
@@ -76,9 +79,13 @@ func Action(cfg *config.Config, dryRun bool) cli.ActionFunc {
 			return err
 		}
 
+		dl, err := fetch.New(cfg.Proxy)
+		if err != nil {
+			return err
+		}
 		d := &deploy.Deployer{
 			Project: p,
-			Fetcher: mitamae.NewFetcher(p.Mitamae),
+			Fetcher: mitamae.NewFetcher(p.Mitamae, cfg.CacheDir, dl),
 			Options: mitamae.Options{
 				DryRun:   dryRun,
 				LogLevel: cfg.MitamaeLogLevel,

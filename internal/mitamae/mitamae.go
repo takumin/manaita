@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +15,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/takumin/manaita/internal/fetch"
 	"github.com/takumin/manaita/internal/project"
 )
 
@@ -52,17 +52,14 @@ func LocalArch() (string, error) {
 	}
 }
 
-// CacheDirEnv is the environment variable setting the cache directory.
-const CacheDirEnv = "MANAITA_CACHE_DIR"
-
-// SystemCacheDir is the cache directory when neither CacheDirEnv nor the user
-// cache directory is set, as when run by cloud-init without HOME.
+// SystemCacheDir is the cache directory when neither the cache directory nor
+// the user cache directory is set, as when run by cloud-init without HOME.
 const SystemCacheDir = "/var/lib/cache/manaita"
 
-// CacheDir returns the cache directory of manaita: CacheDirEnv when set,
-// else manaita under the user cache directory, else SystemCacheDir.
-func CacheDir() string {
-	if dir := os.Getenv(CacheDirEnv); dir != "" {
+// CacheDir returns the cache directory of manaita: dir when set, else manaita
+// under the user cache directory, else SystemCacheDir.
+func CacheDir(dir string) string {
+	if dir != "" {
 		return dir
 	}
 	if dir, err := os.UserCacheDir(); err == nil {
@@ -70,6 +67,10 @@ func CacheDir() string {
 	}
 	return SystemCacheDir
 }
+
+// ReleaseURL is the download URL of the mitamae releases, without the
+// version. It is the origin, which a proxy list may replace by a cache server.
+const ReleaseURL = "https://github.com/itamae-kitchen/mitamae/releases/download"
 
 // Fetcher downloads the release binaries into a cache directory.
 type Fetcher struct {
@@ -82,7 +83,9 @@ type Fetcher struct {
 	Command string
 	// BaseURL is the release download URL, without the version.
 	BaseURL string
-	Client  *http.Client
+	// Downloader downloads the binaries, through the cache servers of its
+	// proxy list.
+	Downloader *fetch.Fetcher
 
 	// mu serializes the downloads of hosts deployed in parallel.
 	mu sync.Mutex
@@ -90,15 +93,15 @@ type Fetcher struct {
 
 // NewFetcher returns a Fetcher of the mitamae release pinned by m, using the
 // mitamae installed in PATH when it matches, and caching the binaries under
-// CacheDir otherwise.
-func NewFetcher(m project.Mitamae) *Fetcher {
+// the cache directory cacheDir otherwise, downloaded by dl.
+func NewFetcher(m project.Mitamae, cacheDir string, dl *fetch.Fetcher) *Fetcher {
 	return &Fetcher{
-		Version:   m.Version,
-		Checksums: m.Checksums,
-		CacheDir:  filepath.Join(CacheDir(), "mitamae"),
-		Command:   "mitamae",
-		BaseURL:   "https://github.com/itamae-kitchen/mitamae/releases/download",
-		Client:    http.DefaultClient,
+		Version:    m.Version,
+		Checksums:  m.Checksums,
+		CacheDir:   filepath.Join(CacheDir(cacheDir), "mitamae"),
+		Command:    "mitamae",
+		BaseURL:    ReleaseURL,
+		Downloader: dl,
 	}
 }
 
@@ -115,50 +118,16 @@ func (f *Fetcher) Fetch(ctx context.Context, arch string) (string, error) {
 	if path, ok := f.installed(want); ok {
 		return path, nil
 	}
-	asset := fmt.Sprintf("mitamae-%s-linux", arch)
 	path := f.Path(arch)
-
 	if got, err := fileSHA256(path); err == nil && got == want {
 		return path, nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		return "", fmt.Errorf("failed to create the cache directory: %w", err)
+	if f.Downloader == nil {
+		return "", fmt.Errorf("no downloader for mitamae %s %s", f.Version, arch)
 	}
-
-	url := fmt.Sprintf("%s/v%s/%s", f.BaseURL, strings.TrimPrefix(f.Version, "v"), asset)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", err
-	}
-	res, err := f.Client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to download %s: %w", url, err)
-	}
-	defer res.Body.Close() //nolint:errcheck
-	if res.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("failed to download %s: %s", url, res.Status)
-	}
-
-	tmp, err := os.CreateTemp(filepath.Dir(path), asset+".*")
-	if err != nil {
-		return "", err
-	}
-	defer os.Remove(tmp.Name()) //nolint:errcheck
-	h := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(tmp, h), res.Body); err != nil {
-		_ = tmp.Close()
-		return "", fmt.Errorf("failed to download %s: %w", url, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return "", err
-	}
-	if got := hex.EncodeToString(h.Sum(nil)); got != want {
-		return "", fmt.Errorf("checksum mismatch for %s: want %s, got %s", url, want, got)
-	}
-	if err := os.Chmod(tmp.Name(), 0o755); err != nil { // #nosec G302 -- the binary is executed
-		return "", err
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
+	url := fmt.Sprintf("%s/v%s/mitamae-%s-linux", f.BaseURL, strings.TrimPrefix(f.Version, "v"), arch)
+	// #nosec G302 -- the binary is executed
+	if err := f.Downloader.File(ctx, url, path, want, 0o755); err != nil {
 		return "", err
 	}
 	return path, nil

@@ -138,7 +138,97 @@ Applying to this machine needs no terminal, so it can run unattended from cloud-
 On this machine, sudo preserves the proxy variables set in the environment (`http_proxy`, `https_proxy`, `ftp_proxy`, `all_proxy`, `no_proxy` and their uppercase forms) for mitamae; on a remote host, mitamae sees the environment of that host.
 A node file matched by several patterns, directly or through a symlink, is passed only once.
 A `mitamae` found in `PATH` is used when it matches the checksum of the arch, so an image with mitamae installed applies without the network.
-Otherwise the binaries are downloaded from the mitamae releases into the cache directory and verified against their checksums.
-The cache directory is `$MANAITA_CACHE_DIR` when set, else `manaita` under the user cache directory (`$XDG_CACHE_HOME` or `~/.cache`),
+Otherwise the binaries are downloaded from the mitamae releases into the cache directory, possibly through a [cache server](#cache-servers), and verified against their checksums.
+The cache directory is `--cache-dir` when set, else `manaita` under the user cache directory (`$XDG_CACHE_HOME` or `~/.cache`),
 else `/var/lib/cache/manaita` when neither `HOME` nor `XDG_CACHE_HOME` is set.
 The remote user must be able to run `sudo`; with a single host and a terminal, sudo can prompt for a password.
+
+## Configuration
+
+Each flag can also be set by an environment variable, or by the configuration file of the machine running manaita,
+in this order of precedence: the command line, the environment, then the file.
+The file is `/etc/manaita/config.yml` (ignored when missing), else `--config` or `$MANAITA_CONFIG`; an empty path reads no file.
+It maps the names of the flags, with underscores instead of hyphens, to their values,
+so it can be written by cloud-init (`write_files`) or Ignition (`storage.files`) when the machine boots:
+
+```yaml
+# /etc/manaita/config.yml
+chdir: /srv/mitamae
+cache_dir: /var/cache/manaita
+proxy: http://cache.internal|direct
+```
+
+| Flag                        | Environment         | Key                 |
+| --------------------------- | ------------------- | ------------------- |
+| `--log-level`, `-l`         | `LOG_LEVEL`         | `log_level`         |
+| `--log-format`, `-f`        | `LOG_FORMAT`        | `log_format`        |
+| `--chdir`, `-C`             | `MANAITA_CHDIR`     | `chdir`             |
+| `--cache-dir`               | `MANAITA_CACHE_DIR` | `cache_dir`         |
+| `--proxy`                   | `MANAITA_PROXY`     | `proxy`             |
+| `--mitamae-log-level`, `-L` |                     | `mitamae_log_level` |
+| `--parallel`, `-j`          |                     | `parallel`          |
+
+An unknown key in the file is an error, so that a misspelled key is not silently ignored.
+
+## Cache servers
+
+The downloads, such as the mitamae binaries, keep their origin in `manaita.yml`, and the machine running manaita decides where they really come from,
+like `url.<base>.insteadOf` for git or `GOPROXY` for Go.
+So many machines booting at once, or a network slow to reach the internet, can download from a cache server without changing the project.
+
+`--proxy` takes a list with the syntax and the meaning of `GOPROXY`: cache server URLs, `direct` for the origin and `off` to disallow downloading.
+After a comma, the next element is tried only when the one before answers 404 or 410;
+after a pipe, it is tried on any error, such as an unreachable server, a 5xx answer or a checksum mismatch.
+The default is `direct`.
+
+```sh
+manaita --proxy 'http://cache.internal|direct' apply  # the origin when the cache server fails
+manaita --proxy 'http://cache.internal,direct' apply  # the origin only for the URLs the cache server does not serve
+manaita --proxy 'http://cache.internal' apply         # the cache server only
+```
+
+A cache server serves the origin `https://host/path` at `<cache server URL>/host/path`; only https origins without a port go through it.
+The downloads are verified against the checksums of `manaita.yml`, so the cache server is not trusted and plain http is enough.
+The proxy variables (`HTTP_PROXY` and the others) still apply to the requests; list the cache server in `NO_PROXY` if it must be reached directly.
+
+A reverse proxy caching by the path is enough.
+The URLs hold a version, so their content does not change and the cache can be kept for as long as the disk allows.
+GitHub redirects the release downloads to short-lived signed URLs, so the cache server follows the redirects itself and caches the result under the original URL:
+
+```nginx
+# /etc/nginx/conf.d/manaita.conf
+proxy_cache_path /var/cache/manaita keys_zone=manaita:10m max_size=20g inactive=365d use_temp_path=off;
+
+server {
+  listen 80;
+  server_name cache.internal;
+  resolver 127.0.0.53; # proxy_pass to the redirects resolves their hosts at run time
+
+  proxy_ssl_server_name on;
+  proxy_cache manaita;
+  proxy_cache_key $request_uri; # the original URL, also for the redirects followed
+  proxy_cache_valid 200 365d;
+  proxy_cache_lock on; # a single request upstream for concurrent ones
+  proxy_buffer_size 16k; # the signed URLs of the redirects are long
+  proxy_buffers 8 16k;
+  proxy_busy_buffers_size 32k;
+  add_header X-Cache-Status $upstream_cache_status always;
+
+  location /github.com/ {
+    proxy_pass https://github.com/;
+    proxy_intercept_errors on;
+    error_page 301 302 303 307 308 = @redirect;
+  }
+
+  location /codeload.github.com/ {
+    proxy_pass https://codeload.github.com/;
+  }
+
+  location @redirect {
+    set $location $upstream_http_location;
+    proxy_pass $location;
+  }
+}
+```
+
+When a cache server answers with a redirect to another host instead, manaita follows it with a warning that the download is not cached.
