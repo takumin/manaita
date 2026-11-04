@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // FileName is the name of the manifest that marks the root of a project.
