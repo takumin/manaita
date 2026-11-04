@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/urfave/cli/v3"
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // DefaultFile is the configuration file of this machine read by default, as
